@@ -1,0 +1,61 @@
+{
+  "name": "kurumi-tokisaki-bot",
+  "version": "1.0.9",
+  "description": "Kurumi Tokisaki - Bot de WhatsApp (v1.0.9 V — Arquitectura modular · IA · RPG · Waifus)",
+  "main": "entry.js",
+  "type": "module",
+  "scripts": {
+    "start": "node --max-old-space-size=320 --no-warnings entry.js",
+    "dev": "node --max-old-space-size=768 --no-warnings index.js",
+    "build": "echo 'No build step needed'",
+    "lint": "node -c index.js handler.js lib/*.js config/*.js plugins/*.js"
+  },
+  "dependencies": {
+    "@bochilteam/scraper": "^5.0.1",
+    "@distube/ytdl-core": "^4.16.12",
+    "@google/genai": "^2.13.0",
+    "@hapi/boom": "^10.0.1",
+    "@renmu/node-shazam": "^2.0.3",
+    "@whiskeysockets/baileys": "^7.0.0-rc13",
+    "axios": "^1.6.0",
+    "btch-downloader": "^6.3.3",
+    "chalk": "^5.3.0",
+    "cheerio": "^1.0.0",
+    "cron": "^3.1.6",
+    "dotenv": "^16.3.1",
+    "file-type": "^19.0.0",
+    "fluent-ffmpeg": "^2.1.3",
+    "formdata-node": "^6.0.3",
+    "fs-extra": "^11.2.0",
+    "jimp": "^0.22.12",
+    "mathjs": "^12.4.1",
+    "mime-types": "^2.1.35",
+    "moment": "^2.30.1",
+    "moment-timezone": "^0.5.45",
+    "nayan-media-downloader": "^0.0.1-security",
+    "node-cron": "^3.0.3",
+    "node-fetch": "^3.3.2",
+    "p-limit": "^5.0.0",
+    "pino": "^8.17.2",
+    "pino-pretty": "^10.3.1",
+    "qrcode": "^1.5.3",
+    "qrcode-terminal": "^0.12.0",
+    "ruhend-scraper": "^10.0.3",
+    "sharp": "^0.33.2",
+    "socket.io": "^4.7.4",
+    "translate-google": "^1.5.0",
+    "uuid": "^9.0.1",
+    "yt-search": "^2.13.1"
+  },
+  "overrides": {
+    "jimp": "^0.22.12"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "author": "«[×𝐹ɾαɳƈιʂƈσ×]»",
+  "license": "MIT"
+}

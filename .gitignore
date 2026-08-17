@@ -1,0 +1,25 @@
+# Dependencias y registros
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# Sesión privada de WhatsApp y datos operativos.
+# Nunca subir credenciales, bases JSON ni copias de respaldo al repositorio.
+/kurumi_session/
+/session/
+/data/
+/database/
+/temp/
+/backups/
+*.session
+*.auth.json
+
+# Entorno local
+.env
+.env.*
+!.env.example
+
+# Archivos del sistema
+.DS_Store

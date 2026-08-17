@@ -1,0 +1,6 @@
+{
+  "name": "Kurumi Tokisaki Bot",
+  "description": "Bot de WhatsApp avanzado con Baileys e IA integrada",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
