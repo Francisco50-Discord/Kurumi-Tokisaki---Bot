@@ -5,7 +5,6 @@
 
 import { addCoins, addExp } from "../lib/database.js";
 import { randomElement } from "../lib/utils.js";
-import { generateTextWithAI } from "../lib/aiGenerator.js";
 
 const triviaGames = global.triviaGames = global.triviaGames || new Map();
 
@@ -320,29 +319,8 @@ const handler = async (m, { conn, chatId, sender, args }) => {
     triviaGames.delete(chatId);
   }
 
-  // Intentar generar pregunta dinámica con IA
-  let q = null;
-  try {
-    const categories = ["Cultura General", "Ciencia y Tecnología", "Anime y Manga", "Geografía e Historia", "Cine y Entretenimiento", "Videojuegos", "Música"];
-    const cat = randomElement(categories);
-    const aiJson = await generateTextWithAI(
-      `Genera una pregunta de trivia sobre '${cat}' en español. Responde ÚNICAMENTE en JSON con el formato: {"category":"${cat}","difficulty":"Media","question":"¿Pregunta?","correct":"Respuesta Correcta","incorrect":["Opción 1","Opción 2","Opción 3"]}`,
-      ""
-    );
-    if (aiJson) {
-      const match = aiJson.match(/\{[\s\S]*\}/);
-      if (match) {
-        const parsed = JSON.parse(match[0]);
-        if (parsed.question && parsed.correct && Array.isArray(parsed.incorrect) && parsed.incorrect.length >= 3) {
-          q = parsed;
-        }
-      }
-    }
-  } catch (e) {}
-
-  if (!q) {
-    q = randomElement(spanishTriviaBank);
-  }
+  // Banco local amplio en español: no requiere red ni servicios de IA.
+  const q = randomElement(spanishTriviaBank);
 
   const question = q.question;
   const correct = q.correct;

@@ -63,10 +63,6 @@ const ACTION_MAP = {
   smug: { endpoint: "smug", emoji: "😏", title: "¡PRESUNTUOSO!", actionText: "mira con cara presuntuosa a", soloText: "mira a todos con una sonrisa presuntuosa! 😼" },
   presumir: { endpoint: "smug", emoji: "😏", title: "¡PRESUNTUOSO!", actionText: "mira con cara presuntuosa a", soloText: "mira a todos con una sonrisa presuntuosa! 😼" },
 
-  // Maullar / Meow
-  meow: { endpoint: "meow", emoji: "🐱", title: "¡MAULLIDO NEKO!", actionText: "le maúlla lindamente como una chica neko a", soloText: "maúlla como una adorable chica neko! nya~ 🐾 🐱" },
-  maullar: { endpoint: "meow", emoji: "🐱", title: "¡MAULLIDO NEKO!", actionText: "le maúlla lindamente como una chica neko a", soloText: "maúlla como una adorable chica neko! nya~ 🐾 🐱" },
-
   // Enojo / Angry
   angry: { endpoint: "angry", emoji: "💢", title: "¡ENOJO!", actionText: "se enoja duramente con", soloText: "está muy enojado/a! 💢" },
   enojar: { endpoint: "angry", emoji: "💢", title: "¡ENOJO!", actionText: "se enoja duramente con", soloText: "está muy enojado/a! 💢" },
@@ -76,14 +72,12 @@ const ACTION_MAP = {
 const handler = async (m, { conn, args, command, sender }) => {
   const cmd = (command || "").toLowerCase();
   
-  // Si usó el comando genérico /gif o /reaction, comprobar si se le pasó un subcomando en args[0]
   let actionKey = cmd;
-  if (["gif", "animegif", "reaction"].includes(cmd)) {
+  if (["animegif", "reaction"].includes(cmd)) {
     const sub = args[0] ? args[0].toLowerCase() : null;
     if (sub && ACTION_MAP[sub]) {
       actionKey = sub;
     } else {
-      // Elegir una acción aleatoria de las disponibles
       const keys = Object.keys(ACTION_MAP);
       actionKey = keys[Math.floor(Math.random() * keys.length)];
     }
@@ -136,7 +130,7 @@ const handler = async (m, { conn, args, command, sender }) => {
   }
 };
 
-handler.command = /^(gif|animegif|reaction|kiss|beso|besar|hug|abrazo|abrazar|pat|acariciar|slap|bofetada|cachetada|cuddle|mimo|acurrucar|tickle|cosquillas|feed|alimentar|dance|bailar|smile|sonreir|sonreír|blush|sonrojar|sonrojarse|cry|llorar|smug|presumir|meow|maullar|angry|enojar|enojo)$/i;
+handler.command = /^(animegif|reaction|kiss|beso|besar|hug|abrazo|abrazar|pat|acariciar|slap|bofetada|cachetada|cuddle|mimo|acurrucar|tickle|cosquillas|feed|alimentar|dance|bailar|smile|sonreir|sonreír|blush|sonrojar|sonrojarse|cry|llorar|smug|presumir|angry|enojar|enojo)$/i;
 handler.description = "Reacciones e interacciones de anime (beso, abrazo, caricias, bailar, etc.)";
 handler.category = "anime";
 handler.cooldown = 3;

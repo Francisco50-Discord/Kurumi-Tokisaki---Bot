@@ -6,7 +6,6 @@
 import axios from "axios";
 import { randomInt, randomElement } from "../lib/utils.js";
 import { translateToSpanish } from "../lib/translator.js";
-import { generateTextWithAI } from "../lib/aiGenerator.js";
 
 const signs = {
   aries: { emoji: "♈", en: "Aries" },
@@ -34,6 +33,23 @@ const localFortunes = [
   "Tu creatividad está en su punto máximo. Aprovéchala al máximo.",
   "La fortuna sonríe a los valientes. No temas dar el primer paso.",
   "Es momento de dejar atrás lo que ya no te sirve. Renuévate.",
+  "Una conversación sincera puede despejar una duda que llevas tiempo guardando.",
+  "Tu energía pide orden: termina una tarea pendiente antes de empezar tres nuevas.",
+  "Una coincidencia aparentemente pequeña podría abrirte una puerta interesante.",
+  "Hoy conviene escuchar con calma antes de sacar conclusiones apresuradas.",
+  "Tu intuición está afinada, pero combinarla con datos hará tus decisiones más fuertes.",
+  "Un gesto amable regresará a ti de una forma inesperada.",
+  "La paciencia con alguien cercano evitará un malentendido innecesario.",
+  "Es un buen momento para revisar tus metas y quedarte con las que realmente deseas.",
+  "El descanso será más productivo que forzarte cuando tu energía ya está baja.",
+  "Un plan sencillo y constante tendrá mejores resultados que una promesa espectacular.",
+  "La suerte aparece cuando te permites probar un camino diferente.",
+  "Una idea que anotaste hace tiempo merece una segunda oportunidad.",
+  "Pon atención a tus gastos pequeños: ordenar lo cotidiano dará espacio a tus planes.",
+  "Una nueva conexión puede convertirse en una amistad valiosa si muestras autenticidad.",
+  "No necesitas resolverlo todo hoy; avanzar un paso también cuenta como progreso.",
+  "Tu voz merece ser escuchada, especialmente cuando hablas con respeto y claridad.",
+  "Cierra el día reconociendo algo que hiciste bien, aunque haya sido sencillo.",
 ];
 
 const handler = async (m, { args, usedPrefix }) => {
@@ -82,16 +98,8 @@ const handler = async (m, { args, usedPrefix }) => {
     }
   } catch (e) {}
 
-  // Fallback AI o local (si la API cae)
-  let fortuneText = "";
-  try {
-    fortuneText = await generateTextWithAI(
-      `Escribe un horóscopo diario divertido y místico en español para el signo ${signKey} (${sign.emoji}). Máximo 3 oraciones.`,
-      randomElement(localFortunes)
-    );
-  } catch (e) {
-    fortuneText = randomElement(localFortunes);
-  }
+  // Fallback local si la API externa no responde.
+  const fortuneText = randomElement(localFortunes);
 
   const areas = ["Amor", "Trabajo", "Salud", "Dinero"];
   const ratings = ["⭐", "⭐⭐", "⭐⭐⭐", "⭐⭐⭐⭐", "⭐⭐⭐⭐⭐"];

@@ -2,16 +2,34 @@
 //   Kurumi Tokisaki - 8ball Command (Dinámico)
 // ============================================================
 
-import { generateTextWithAI } from "../lib/aiGenerator.js";
 import { randomElement } from "../lib/utils.js";
 
-const fallbackResponses = [
+const localResponses = [
   "🟢 Sí, definitivamente.",
   "🟢 Es cierto y los astros lo confirman.",
   "🟢 Puedes contar con ello.",
+  "🟢 Sin duda, el camino está despejado.",
+  "🟢 Las señales apuntan a un sí rotundo.",
+  "🟢 Todo indica que ocurrirá antes de lo que imaginas.",
+  "🟢 La suerte está de tu lado esta vez.",
+  "🟢 Sí, pero tendrás que dar el primer paso.",
+  "🟢 Los dados del destino acaban de sonreírte.",
   "🟡 Respuesta confusa, la energía no está clara.",
+  "🟡 Pregunta de nuevo cuando el universo esté menos ocupado.",
+  "🟡 Hay posibilidades, pero nada está escrito todavía.",
+  "🟡 Las señales están divididas; observa un poco más.",
+  "🟡 Tal vez, si corriges el rumbo a tiempo.",
+  "🟡 El oráculo necesita más contexto y una buena merienda.",
+  "🟡 No es el momento de decidir: espera una señal más.",
   "🔴 Mis fuentes dicen que no.",
-  "🔴 Las perspectivas no son buenas."
+  "🔴 Las perspectivas no son buenas.",
+  "🔴 El destino recomienda no hacerlo.",
+  "🔴 Definitivamente no; ni Kurumi puede maquillarlo.",
+  "🔴 La respuesta es no por ahora.",
+  "🔴 Ese camino parece llevar directo al caos.",
+  "🔴 El universo cerró esa puerta con llave.",
+  "🔴 No cuentes con ello, busca un plan alternativo.",
+  "🔴 Las estrellas dicen que necesitas pensarlo mejor.",
 ];
 
 const handler = async (m, { args, body, usedPrefix }) => {
@@ -26,8 +44,7 @@ const handler = async (m, { args, body, usedPrefix }) => {
     );
   }
 
-  const prompt = `Actúa como una mística Bola Mágica 8. El usuario pregunta: "${body}". Responde con una sola frase corta mística y contundente en español indicando si Sí, No, o Tal vez/Incierto, comenzando con un emoji (🟢 para sí, 🔴 para no, 🟡 para incierto/tal vez). Responde ÚNICAMENTE con la frase.`;
-  const answer = await generateTextWithAI(prompt, randomElement(fallbackResponses));
+  const answer = randomElement(localResponses);
 
   await m.reply(
     `✦━【 *BOLA MÁGICA 8* 】━✦\n\n` +
@@ -37,7 +54,7 @@ const handler = async (m, { args, body, usedPrefix }) => {
 };
 
 handler.command = /^(8ball|bola8|magia|oraculo|oráculo)$/i;
-handler.description = "Pregúntale a la bola mágica (respuesta mística dinámicamente generada)";
+handler.description = "Pregúntale a la bola mágica (respuesta mística local)";
 handler.category = "juegos";
 
 export default handler;

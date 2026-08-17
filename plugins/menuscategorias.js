@@ -138,7 +138,6 @@ const handlerAnime = async (m, { conn }) => {
     `» ${p}personaje\n` +
     `» ${p}topanime\n` +
     `» ${p}neko\n` +
-    `» ${p}gif\n` +
     `» ${p}besar\n` +
     `» ${p}abrazar\n` +
     `» ${p}pat\n` +
@@ -151,8 +150,8 @@ const handlerAnime = async (m, { conn }) => {
     `» ${p}sonrojar\n` +
     `» ${p}llorar\n` +
     `» ${p}presumir\n` +
-    `» ${p}maullar\n` +
-    `» ${p}enojar\n\n` +
+    `» ${p}enojar\n` +
+    `» ${p}cum\n\n` +
     footer();
 
   await sendMenu(m, conn, text);
@@ -288,7 +287,7 @@ const handlerNsfw = async (m, { conn }) => {
     `» ${p}boobs\n` +
     `» ${p}blowjob\n` +
     `» ${p}anal\n` +
-    `» ${p}cum\n` +
+    `» ${p}cumshot\n` +
     `» ${p}feet\n` +
     `» ${p}ass\n` +
     `» ${p}erok\n` +

@@ -5,7 +5,6 @@
 
 import { randomElement } from "../lib/utils.js";
 import { addCoins, addExp } from "../lib/database.js";
-import { generateTextWithAI } from "../lib/aiGenerator.js";
 
 const hangmanGames = global.hangmanGames = global.hangmanGames || new Map();
 
@@ -50,25 +49,8 @@ const handler = async (m, { chatId, sender, usedPrefix }) => {
     );
   }
 
-  // Generar palabra de forma dinámica con IA
-  let word = "";
-  try {
-    const categories = ["animales", "tecnología", "comida", "geografía", "anime", "deportes", "mitología", "objetos", "naturaleza"];
-    const cat = randomElement(categories);
-    const aiWord = await generateTextWithAI(
-      `Dame una sola palabra común y divertida en español sobre el tema '${cat}', de entre 5 y 10 letras, sin tildes ni caracteres especiales, todo en minúsculas. Responde ÚNICAMENTE con la palabra.`,
-      ""
-    );
-
-    const cleanAiWord = (aiWord || "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z]/g, "");
-    if (cleanAiWord && cleanAiWord.length >= 4 && cleanAiWord.length <= 12) {
-      word = cleanAiWord;
-    }
-  } catch (e) {}
-
-  if (!word) {
-    word = randomElement(fallbackWordList);
-  }
+  // Banco local amplio: no requiere red ni servicios de IA.
+  const word = randomElement(fallbackWordList);
 
   hangmanGames.set(chatId, {
     word,
