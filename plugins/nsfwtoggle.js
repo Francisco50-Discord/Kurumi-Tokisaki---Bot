@@ -11,7 +11,7 @@ import { getGroup, updateGroup, getUser, updateUser } from "../lib/database.js";
 // ─── Category list (for display) ───
 const CATEGORY_LIST = [
   "hentai", "hentaigif", "nsfwwaifu", "nsfwneko",
-  "blowjob", "anal", "boobs", "ass", "pussy", "cum", "feet",
+  "blowjob", "anal", "boobs", "ass", "pussy", "cumshot", "feet",
   "yuri", "lesbian", "ahegao", "succubus", "thighs", "paizuri",
   "ecchi", "kuni", "keta", "erok", "gasm", "lewd", "holoero"
 ];

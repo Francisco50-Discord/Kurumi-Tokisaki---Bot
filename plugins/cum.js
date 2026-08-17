@@ -3,8 +3,9 @@
 //   Category: anime
 // ============================================================
 
-import { getFacialMedia } from "../lib/facialFetcher.js";
+import { getFacialImage, getFacialMedia } from "../lib/facialFetcher.js";
 import { sendAnimeMediaMessage } from "../lib/animeMedia.js";
+import { downloadMediaBuffer, getNsfwImageCandidate } from "../lib/nsfwFetcher.js";
 import { normalizeJid, resolveTargetJid } from "../lib/utils.js";
 
 const facialMessages = [
@@ -41,7 +42,7 @@ function mention(jid) {
 const handler = async (m, { conn, args, sender }) => {
   const senderJid = normalizeJid(sender || m.sender);
   const target = await resolveTargetJid(m, args, conn);
-  const { url } = getFacialMedia(m.chatId);
+  const media = getFacialMedia(m.chatId);
 
   let caption;
   let mentions;
@@ -49,8 +50,8 @@ const handler = async (m, { conn, args, sender }) => {
   if (target) {
     const targetJid = normalizeJid(target);
     const action = facialMessages[Math.floor(Math.random() * facialMessages.length)];
-    caption = `✦━【 💦 *FACIAL DE ANIME* 】━✦\n\n💦 ${mention(senderJid)} ${action} ${mention(targetJid)}! ✨`;
-    mentions = [senderJid, targetJid];
+    caption = `✦━【 💦 *FACIAL DE ANIME* 】━✦\n\n💦 ${action} ${mention(targetJid)}! ✨`;
+    mentions = [targetJid];
   } else {
     const solo = soloMessages[Math.floor(Math.random() * soloMessages.length)];
     caption = `✦━【 💦 *FACIAL DE ANIME* 】━✦\n\n💦 ${mention(senderJid)} ${solo}`;
@@ -58,13 +59,41 @@ const handler = async (m, { conn, args, sender }) => {
   }
 
   try {
-    await sendAnimeMediaMessage(conn, m.chatId, url, caption, {
+    await sendAnimeMediaMessage(conn, m.chatId, media.url, caption, {
       quoted: m,
       mentions,
+      // No se envía un GIF como imagen si falla la conversión: eso produce el
+      // recuadro vacío que WhatsApp muestra para medios animados incompatibles.
+      allowAnimatedFallback: false,
     });
   } catch (error) {
-    console.error("[cum] Error enviando contenido facial:", error);
-    await m.reply("❌ No se pudo enviar el contenido facial. Inténtalo de nuevo en unos segundos.");
+    console.warn("[cum] Medio verificado no disponible; probando fuentes faciales filtradas:", error.message);
+    try {
+      // El respaldo consulta Danbooru, Xbooru, Yandere y Konachan con la
+      // categoría `facial`; nsfwFetcher aplica cum_on_face y exclusiones de
+      // genitales, pecho, oral, animales y presencia masculina.
+      const candidate = await getNsfwImageCandidate("facial", { scopeKey: m.chatId });
+      if (!candidate?.url) throw new Error("sin candidato facial filtrado");
+      const buffer = candidate.preloadedBuffer || await downloadMediaBuffer(candidate.url);
+      if (!buffer || buffer.length < 1000) throw new Error("candidato facial vacío");
+      await sendAnimeMediaMessage(conn, m.chatId, candidate.url, caption, {
+        quoted: m,
+        mentions,
+        preloadedBuffer: buffer,
+      });
+    } catch (filteredError) {
+      console.warn("[cum] Fuentes faciales filtradas no disponibles; usando imagen aprobada local:", filteredError.message);
+      try {
+        const fallback = getFacialImage(m.chatId);
+        await sendAnimeMediaMessage(conn, m.chatId, fallback.url, caption, {
+          quoted: m,
+          mentions,
+        });
+      } catch (fallbackError) {
+        console.error("[cum] Error enviando contenido facial:", fallbackError);
+        await m.reply("❌ No se pudo enviar el contenido facial. Inténtalo de nuevo en unos segundos.");
+      }
+    }
   }
 };
 
