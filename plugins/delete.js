@@ -79,7 +79,6 @@ const handler = async (m, { conn, chatId, isGroup, isAdmin, isOwner, usedPrefix 
 
   try {
     await conn.sendMessage(chatId, { delete: deleteKey });
-    await m.reply(`✅ Mensaje eliminado para todos.`);
   } catch (error) {
     const message = String(error?.message || error || "");
     const privateLimitation = !isGroup && !deleteKey.fromMe;
