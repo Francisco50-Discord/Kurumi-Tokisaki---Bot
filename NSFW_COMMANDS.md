@@ -6,28 +6,45 @@ Los comandos de la categoría NSFW funcionan con **fuentes públicas gratuitas**
 
 ## Selección y filtros
 
+El selector usa varias fuentes, pero nunca intercambia una categoría por otra. Una fuente solo se acepta cuando su endpoint o sus etiquetas representan la categoría solicitada.
+
 | Orden | Fuente | Uso |
 |---|---|---|
-| 1 | Purrbot, Nekobot y Nekos.life | Respuestas públicas por categoría para `anal`, `bj`, `blowjob`, `cum`, `gasm`, `hentai`, `pussy`, `yuri` y categorías generales. |
-| 2 | waifu.im | Respaldo con etiqueta NSFW y dimensiones para las categorías compatibles. |
-| 3 | Danbooru y boorus compatibles | Última alternativa con búsqueda prioritaria de arte original y exclusiones por etiquetas. |
+| 1 | PurrBot, Nekobot y Nekos.life | Solo endpoints públicos dedicados: `anal`, `blowjob`, `cum`, `gasm`, `hentai` y `yuri`, entre los que están documentados y disponibles. |
+| 2 | waifu.im | Solo cuando existe un tag equivalente al comando, como `ass`, `boobs`, `ecchi`, `hentai` o `paizuri`; no se usa como sustituto genérico. |
+| 3 | Danbooru, Xbooru, Yande.re y Konachan | Consultas explícitas por tags de la categoría solicitada, con exclusiones locales, límites de tamaño y control de calidad. |
 
-Todas las rutas usan HTTPS, evitan repeticiones recientes por chat y siguen aplicando límites de tamaño. El filtro descarta etiquetas de animales, cruces humano-animal, bestialidad, cómics, viñetas, globos de diálogo, animación occidental, tentáculos, baja calidad, franquicias conocidas y personajes no solicitados. Si una búsqueda preferida de arte original no devuelve opciones, el bot amplía la consulta **sin retirar esas exclusiones**.
+Todas las rutas usan HTTPS, evitan repeticiones recientes por chat y aplican límites de tamaño. Se descartan animales, cruces humano-animal, bestialidad, cómics, viñetas, globos de diálogo, animación occidental, tentáculos, baja calidad, arte de IA y etiquetas de identidad no solicitadas. Si la consulta preferida no devuelve opciones, solo se amplía dentro de la **misma categoría** y sin retirar exclusiones.
+
+Los endpoints que devuelven GIF o vídeo se marcan como animados. Los comandos NSFW de imagen no envían esos resultados como JPG; `/cum` y `/hentaigif` son los flujos que solicitan medios animados explícitamente.
 
 ## Mapa de categorías
 
-| Comando o alias | Fuente inicial | Respaldo |
+| Comando o alias | Categoría interna | Consulta o fuente permitida |
 |---|---|---|
-| `anal` | Purrbot `anal` | waifu.im y boorus filtrados |
-| `ass`, `boobs`, `ecchi`, `lewd`, `nsfwwaifu`, `paizuri` | Purrbot `solo` o waifu.im según la etiqueta | Boorus filtrados |
-| `bj`, `blowjob` | Purrbot `blowjob` | waifu.im `oral` y boorus filtrados |
-| `cum` | Purrbot `cum` | Boorus filtrados |
-| `gasm` | Nekos.life `gasm` | Purrbot `solo` y boorus filtrados |
-| `hentai`, `ahegao` | Nekobot o Purrbot `solo` | waifu.im y boorus filtrados |
-| `pussy` | Purrbot `pussylick` | Boorus filtrados |
-| `lesbian`, `yuri` | Purrbot `yuri` | Boorus filtrados |
-| Categorías restantes | waifu.im cuando existe etiqueta | Boorus filtrados |
-| `hentaigif` | Consulta automática de medios animados | Nueva búsqueda si falla el primer medio |
+| `anal` | `anal` | Endpoint `anal` y tags `anal`. |
+| `pussy` | `pussy` | Tags `pussy`/`vagina`; no se sustituye por `pussylick`. |
+| `ass` | `ass` | Tags `ass`/`butt`/`buttocks` y tag equivalente de waifu.im cuando aplica. |
+| `boobs` | `boobs` | Tags `breasts`/`cleavage`/`nipples` y tag equivalente de waifu.im. |
+| `feet` | `feet` | Tags `feet`/`soles`. |
+| `bj`, `blowjob` | `blowjob` | Endpoint `blowjob` y tags `blowjob`/`fellatio`. |
+| `cumshot` | `cum` | Endpoint `cum` y tags `cum`; el comando continúa separado de `/cum`. |
+| `gasm` | `gasm` | Endpoint `gasm` y tags `orgasm`/`female_orgasm`, sin sustituir por `ahegao`. |
+| `hentai`, `ahegao` | Su categoría propia | Endpoints o tags respectivos; no caen automáticamente en hentai desde otra categoría. |
+| `lesbian`, `yuri` | `lesbian`/`yuri` | Endpoint `yuri` o tags `female_on_female`/`yuri`. |
+| `kuni` | `kuni` | Tags `cunnilingus`. |
+| `keta` | `keta` | Tags `bondage`/`shibari`. |
+| `erok` | `erok` | Tags `kitsune`. |
+| `holoero` | `holoero` | Tags `hololive`, como excepción de obra solicitada. |
+| `lewd` | `lewd` | Tags `panties`. |
+| `paizuri` | `paizuri` | Tags `paizuri`/`breast_hold` y tag equivalente de waifu.im. |
+| `ecchi` | `ecchi` | Tags `bikini` con filtros de categoría. |
+| `nsfwneko`, `neko` | Su categoría propia | Tags `catgirl`/`nekomimi`; no se sustituye por waifu genérico. |
+| `succubus`, `thighs` | Su categoría propia | Tags `succubus` o `thighhighs`. |
+| `cum` | No es un alias público NSFW | Reservado internamente para `/cumshot`; `/cum` usa la categoría Anime `facial`. |
+| `hentaigif` | `hentaigif` | Consulta de medios animados etiquetados como `animated`; se convierte y valida antes del envío. |
+
+El comando Anime `/cum` mantiene además sus cuatro imágenes locales aprobadas como último respaldo cuando ningún GIF remoto supera la validación.
 
 ## Calidad automática de `ytmp4`
 

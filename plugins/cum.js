@@ -3,7 +3,7 @@
 //   Category: anime
 // ============================================================
 
-import { getFacialImage, getFacialMedia } from "../lib/facialFetcher.js";
+import { getFacialGif, getFacialImage, markFacialMediaUnavailable } from "../lib/facialFetcher.js";
 import { sendAnimeMediaMessage } from "../lib/animeMedia.js";
 import { downloadMediaBuffer, getNsfwImageCandidate } from "../lib/nsfwFetcher.js";
 import { normalizeJid, resolveTargetJid } from "../lib/utils.js";
@@ -42,8 +42,6 @@ function mention(jid) {
 const handler = async (m, { conn, args, sender }) => {
   const senderJid = normalizeJid(sender || m.sender);
   const target = await resolveTargetJid(m, args, conn);
-  const media = getFacialMedia(m.chatId);
-
   let caption;
   let mentions;
 
@@ -58,43 +56,76 @@ const handler = async (m, { conn, args, sender }) => {
     mentions = [senderJid];
   }
 
-  try {
-    await sendAnimeMediaMessage(conn, m.chatId, media.url, caption, {
+  const sendFacialMedia = async (selectedMedia, extraOptions = {}) => {
+    if (!selectedMedia?.url) throw new Error("medio facial sin URL");
+    const remote = typeof selectedMedia.url === "string" && /^https?:\/\//i.test(selectedMedia.url);
+    const preloadedBuffer = remote
+      ? await downloadMediaBuffer(selectedMedia.url, {
+        timeout: 16000,
+        maxBytes: 28 * 1024 * 1024,
+      })
+      : undefined;
+    if (remote && (!preloadedBuffer || preloadedBuffer.length < 1000)) {
+      throw new Error("medio facial remoto vacío");
+    }
+    return sendAnimeMediaMessage(conn, m.chatId, selectedMedia.url, caption, {
       quoted: m,
       mentions,
+      preloadedBuffer,
       // No se envía un GIF como imagen si falla la conversión: eso produce el
       // recuadro vacío que WhatsApp muestra para medios animados incompatibles.
       allowAnimatedFallback: false,
+      ...extraOptions,
     });
-  } catch (error) {
-    console.warn("[cum] Medio verificado no disponible; probando fuentes faciales filtradas:", error.message);
-    try {
+  };
+
+  const tryVerifiedGifs = async () => {
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const gif = getFacialGif(m.chatId);
+      if (!gif) return false;
+      try {
+        await sendFacialMedia(gif, { forceAnimated: true });
+        return true;
+      } catch (error) {
+        markFacialMediaUnavailable(gif.url);
+        console.warn(`[cum] GIF verificado rechazado (${attempt + 1}/6):`, error.message);
+      }
+    }
+    return false;
+  };
+
+  if (await tryVerifiedGifs()) return;
+  console.warn("[cum] GIFs verificados no disponibles; probando fuentes faciales filtradas");
+  try {
       // El respaldo consulta Danbooru, Xbooru, Yandere y Konachan con la
       // categoría `facial`; nsfwFetcher aplica cum_on_face y exclusiones de
       // genitales, pecho, oral, animales y presencia masculina.
-      const candidate = await getNsfwImageCandidate("facial", { scopeKey: m.chatId });
+      const candidate = await getNsfwImageCandidate("facial", {
+        scopeKey: m.chatId,
+        allowAnimated: true,
+      });
       if (!candidate?.url) throw new Error("sin candidato facial filtrado");
-      const buffer = candidate.preloadedBuffer || await downloadMediaBuffer(candidate.url);
+      const buffer = candidate.preloadedBuffer || await downloadMediaBuffer(candidate.url, {
+        timeout: 16000,
+        maxBytes: 28 * 1024 * 1024,
+      });
       if (!buffer || buffer.length < 1000) throw new Error("candidato facial vacío");
       await sendAnimeMediaMessage(conn, m.chatId, candidate.url, caption, {
         quoted: m,
         mentions,
         preloadedBuffer: buffer,
+        allowAnimatedFallback: false,
       });
     } catch (filteredError) {
       console.warn("[cum] Fuentes faciales filtradas no disponibles; usando imagen aprobada local:", filteredError.message);
       try {
         const fallback = getFacialImage(m.chatId);
-        await sendAnimeMediaMessage(conn, m.chatId, fallback.url, caption, {
-          quoted: m,
-          mentions,
-        });
+        await sendFacialMedia(fallback);
       } catch (fallbackError) {
         console.error("[cum] Error enviando contenido facial:", fallbackError);
         await m.reply("❌ No se pudo enviar el contenido facial. Inténtalo de nuevo en unos segundos.");
       }
     }
-  }
 };
 
 handler.command = /^(cum|correrse|cummear|semenenlacara)$/i;
