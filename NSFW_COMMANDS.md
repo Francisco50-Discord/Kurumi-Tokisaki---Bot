@@ -16,6 +16,8 @@ El selector usa varias fuentes, pero nunca intercambia una categoría por otra. 
 
 Todas las rutas usan HTTPS, evitan repeticiones recientes por chat y aplican límites de tamaño. Se descartan animales, cruces humano-animal, bestialidad, cómics, viñetas, globos de diálogo, animación occidental, tentáculos, baja calidad, arte de IA y etiquetas de identidad no solicitadas. Si la consulta preferida no devuelve opciones, solo se amplía dentro de la **misma categoría** y sin retirar exclusiones.
 
+Como regla adicional, se excluyen `futanari`/`futa`, `intersex`, `newhalf`, `otoko_no_ko`, `transgender` y variantes de anatomía masculina incompatible en personajes femeninos. También se excluyen `yaoi`, `bl`, `boys_love`, `gay`, `male_on_male`, `male_male`, `boy_on_boy` y `bara`. **No se excluyen** `hetero`, `straight`, `male`, `1boy`, `male_on_female` ni la participación de un hombre con una mujer adulta.
+
 Los endpoints que devuelven GIF o vídeo se marcan como animados. Los comandos NSFW de imagen no envían esos resultados como JPG; `/cum` y `/hentaigif` son los flujos que solicitan medios animados explícitamente.
 
 ## Mapa de categorías
