@@ -151,7 +151,8 @@ const handlerAnime = async (m, { conn }) => {
     `» ${p}llorar\n` +
     `» ${p}presumir\n` +
     `» ${p}enojar\n` +
-    `» ${p}cum\n\n` +
+    `» ${p}cum\n` +
+    `» ${p}fuck\n\n` +
     footer();
 
   await sendMenu(m, conn, text);
