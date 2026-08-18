@@ -299,12 +299,10 @@ const handlerNsfw = async (m, { conn }) => {
     `» ${p}paizuri\n` +
     `» ${p}kuni\n` +
     `» ${p}yuri\n` +
-    `» ${p}lesbian\n` +
     `» ${p}nsfwneko\n` +
     `» ${p}nsfwwaifu\n` +
     `» ${p}holoero\n` +
     `» ${p}lewd\n` +
-    `» ${p}gasm\n` +
     `» ${p}keta\n\n` +
     footer();
 
