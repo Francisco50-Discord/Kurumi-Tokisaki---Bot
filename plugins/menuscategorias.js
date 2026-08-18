@@ -233,6 +233,7 @@ const handlerGrupo = async (m, { conn }) => {
     `» ${p}link\n` +
     `» ${p}revoke\n` +
     `» ${p}kick\n` +
+    `» ${p}delete *(responder a un mensaje)*\n` +
     `» ${p}add\n` +
     `» ${p}promote\n` +
     `» ${p}demote\n` +
