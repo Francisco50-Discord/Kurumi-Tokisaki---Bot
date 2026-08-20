@@ -218,206 +218,320 @@ async function refreshLoaderCandidate(candidate) {
   if (!candidate?.progressUrl) return null;
 
   try {
-    const refreshRes = await axios.get(candidate.progressUrl, {
+    const progressRes = await axios.get(candidate.progressUrl, {
       timeout: 8000,
       headers: LOADER_TO_HEADERS
     });
-    const data = refreshRes.data || {};
+    const data = progressRes.data || {};
     const downloadUrl = getLoaderDownloadUrl(data);
+    if (!downloadUrl || downloadUrl === candidate.downloadUrl) return null;
 
-    if (downloadUrl) {
-      return {
-        ...candidate,
-        downloadUrl,
-        title: typeof data.info?.title === "string" ? data.info.title : candidate.title,
-        thumbnailUrl: data.thumbnail_url || data.info?.image || candidate.thumbnailUrl
-      };
-    }
-
-    if (isLoaderFailure(data)) {
-      console.warn(`[YTMP4][Loader.to] Actualización rechazada por la API.`);
-      return null;
-    }
-
-    return null;
+    return {
+      ...candidate,
+      downloadUrl,
+      title: typeof data.info?.title === "string" ? data.info.title : candidate.title,
+      thumbnailUrl: data.thumbnail_url || data.info?.image || candidate.thumbnailUrl
+    };
   } catch (error) {
-    console.warn(`[YTMP4][Loader.to] Error al actualizar el candidato: ${error.message}`);
+    console.warn(`[YTMP4][Loader.to] No se pudo renovar el enlace de ${candidate.quality}p: ${error.message}`);
     return null;
+  }
+}
+
+async function downloadLoaderCandidate(candidate) {
+  try {
+    return {
+      candidate,
+      buffer: await downloadMediaBuffer(candidate.downloadUrl)
+    };
+  } catch (firstError) {
+    const refreshedCandidate = await refreshLoaderCandidate(candidate);
+    if (!refreshedCandidate) throw firstError;
+
+    console.info(`[YTMP4][Loader.to] Enlace de ${candidate.quality}p renovado; reintentando una sola vez.`);
+    return {
+      candidate: refreshedCandidate,
+      buffer: await downloadMediaBuffer(refreshedCandidate.downloadUrl)
+    };
   }
 }
 
 async function downloadThumbnailBuffer(url) {
-  if (!url || typeof url !== "string") throw new Error("URL no válida");
-  const res = await axios.get(url, { responseType: "arraybuffer", timeout: 8000 });
-  return Buffer.from(res.data);
-}
+  if (!url || typeof url !== "string" || !url.startsWith("http")) {
+    throw new Error("URL de portada no válida.");
+  }
 
-async function downloadLoaderCandidate(candidate) {
-  if (!candidate?.downloadUrl) throw new Error("URL no disponible en el candidato");
-
-  const res = await axios.get(candidate.downloadUrl, {
+  const response = await axios.get(url, {
     responseType: "arraybuffer",
-    timeout: 120000,
-    onDownloadProgress: (progressEvent) => {
-      const { loaded, total } = progressEvent;
-      if (total) {
-        const percent = Math.round((loaded / total) * 100);
-        console.info(`[YTMP4][Loader.to] Descargando ${candidate.quality}p: ${percent}%`);
-      }
+    timeout: 8000,
+    maxContentLength: 5 * 1024 * 1024,
+    maxBodyLength: 5 * 1024 * 1024,
+    headers: {
+      Accept: "image/jpeg,image/*;q=0.9,*/*;q=0.8",
+      "User-Agent": "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/122.0 Safari/537.36"
     }
   });
 
-  return {
-    candidate,
-    buffer: Buffer.from(res.data)
-  };
+  const buffer = Buffer.from(response.data || []);
+  if (buffer.length < 1000) throw new Error("Portada vacía o demasiado pequeña.");
+  return buffer;
 }
 
+function extractVideoThumbnailBuffer(videoBuffer) {
+  if (!Buffer.isBuffer(videoBuffer) || videoBuffer.length < 50000) {
+    return Promise.reject(new Error("Video insuficiente para extraer una portada."));
+  }
+
+  return new Promise((resolve, reject) => {
+    const ffmpeg = spawn("ffmpeg", [
+      "-hide_banner",
+      "-loglevel", "error",
+      "-i", "pipe:0",
+      "-frames:v", "1",
+      "-vf", "scale=640:-2",
+      "-f", "image2pipe",
+      "-vcodec", "mjpeg",
+      "-q:v", "3",
+      "pipe:1"
+    ], { stdio: ["pipe", "pipe", "pipe"] });
+    const chunks = [];
+    let stderr = "";
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      ffmpeg.kill("SIGKILL");
+      finish(new Error("Tiempo agotado al extraer la portada del MP4."));
+    }, 10000);
+
+    const finish = (error, buffer) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      if (error) reject(error);
+      else resolve(buffer);
+    };
+
+    ffmpeg.stdout.on("data", (chunk) => chunks.push(chunk));
+    ffmpeg.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+    ffmpeg.on("error", finish);
+    ffmpeg.on("close", (code) => {
+      if (code !== 0) {
+        finish(new Error(`FFmpeg no pudo extraer la portada (${code}): ${stderr.trim() || "sin detalle"}`));
+        return;
+      }
+      const buffer = Buffer.concat(chunks);
+      if (buffer.length < 1000) {
+        finish(new Error("FFmpeg generó una portada vacía."));
+        return;
+      }
+      finish(null, buffer);
+    });
+    ffmpeg.stdin.on("error", (error) => {
+      if (error.code !== "EPIPE") finish(error);
+    });
+    ffmpeg.stdin.end(videoBuffer);
+  });
+}
+
+async function downloadMediaBuffer(url) {
+  if (!url || typeof url !== "string" || !url.startsWith("http")) {
+    throw new Error("URL de descarga no válida.");
+  }
+
+  const attempts = [
+    {
+      timeout: 15000,
+      headers: { Referer: "https://loader.to/" }
+    },
+    {
+      timeout: 10000,
+      headers: { Referer: "https://www.youtube.com/" }
+    }
+  ];
+  let lastError = null;
+
+  for (const [index, attempt] of attempts.entries()) {
+    try {
+      const response = await axios({
+        method: "GET",
+        url,
+        responseType: "arraybuffer",
+        timeout: attempt.timeout,
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+          "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8",
+          "Accept-Encoding": "gzip, deflate, br",
+          "Accept-Language": "es-ES,es;q=0.9",
+          "Sec-Fetch-Dest": "video",
+          "Sec-Fetch-Mode": "cors",
+          "Sec-Fetch-Site": "cross-site",
+          ...attempt.headers
+        }
+      });
+
+      if (response.data && response.data.byteLength > 50000) {
+        console.info(`[YTMP4] Buffer descargado exitosamente (${(response.data.byteLength / 1024 / 1024).toFixed(2)} MB).`);
+        return Buffer.from(response.data);
+      }
+
+      lastError = new Error("Buffer MP4 vacío o muy pequeño.");
+    } catch (error) {
+      lastError = error;
+      console.warn(`[YTMP4] Descarga del enlace falló en intento ${index + 1}/${attempts.length}: ${error.message}`);
+      if ([403, 404, 502, 503, 504].includes(error?.response?.status)) break;
+    }
+  }
+
+  throw lastError || new Error("Loader.to no entregó un MP4 descargable.");
+}
+
+// ✅ NUEVA FUNCIÓN: Obtener duración real del MP4 con ffprobe
 function getDurationFromVideo(videoPath) {
   try {
     const output = execSync(
       `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1:noprint_wrappers=1 "${videoPath}"`,
-      { encoding: "utf8", timeout: 10000 }
+      { encoding: "utf8", timeout: 15000 }
     ).trim();
+
     const duration = parseFloat(output);
-    return isNaN(duration) ? 0 : Math.round(duration);
+    console.info(`[YTMP4] Duración obtenida de ffprobe: ${duration}s`);
+    return Math.round(duration);
   } catch (error) {
-    console.warn(`[YTMP4] ffprobe no disponible o falló: ${error.message}`);
+    console.warn(`[YTMP4] No se pudo obtener duración con ffprobe: ${error.message}`);
     return 0;
   }
 }
 
-async function extractVideoThumbnailBuffer(videoBuffer) {
-  let tempDir = null;
-
-  try {
-    const tempRoot = path.resolve("./temp");
-    fs.mkdirSync(tempRoot, { recursive: true });
-    tempDir = path.join(tempRoot, `thumb_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`);
-    fs.mkdirSync(tempDir, { recursive: true });
-
-    const inputPath = path.join(tempDir, "input.mp4");
-    const outputPath = path.join(tempDir, "thumbnail.jpg");
-
-    fs.writeFileSync(inputPath, videoBuffer);
-
-    await new Promise((resolve, reject) => {
-      const ffmpeg = spawn("ffmpeg", [
+// ✅ NUEVA FUNCIÓN: Procesar MP4 con FFmpeg (moov al inicio + metadata)
+function processVideoWithFFmpeg(inputPath, outputPath, title, durationSeconds) {
+  return new Promise((resolve, reject) => {
+    try {
+      const ffmpegArgs = [
         "-i", inputPath,
-        "-ss", "00:00:01",
-        "-vframes", "1",
-        "-q:v", "2",
+        "-c:v", "copy", // Copiar video sin recodificar
+        "-c:a", "copy", // Copiar audio sin recodificar
+        "-movflags", "faststart", // ✅ Mueve moov atom al inicio (permite seek)
+        "-metadata", `title=${title}`, // Agregar título
+        "-metadata", `duration=${durationSeconds}`, // Agregar duración
+        "-y", // Sobrescribir sin preguntar
         outputPath
-      ], { stdio: "pipe" });
+      ];
+
+      console.info(`[YTMP4] Procesando video con FFmpeg (faststart + metadata)...`);
+
+      const ffmpeg = spawn("ffmpeg", ffmpegArgs, {
+        stdio: ["ignore", "pipe", "pipe"]
+      });
 
       let errorOutput = "";
+
       ffmpeg.stderr.on("data", (data) => {
         errorOutput += data.toString();
       });
 
       ffmpeg.on("close", (code) => {
         if (code === 0) {
-          resolve();
+          console.info(`[YTMP4] Video procesado correctamente con FFmpeg`);
+          const stats = fs.statSync(outputPath);
+          console.info(`[YTMP4] Tamaño final: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
+          resolve(true);
         } else {
-          reject(new Error(`FFmpeg falló con código ${code}: ${errorOutput}`));
+          console.error(`[YTMP4] FFmpeg error (code ${code}): ${errorOutput}`);
+          reject(new Error(`FFmpeg process exited with code ${code}`));
         }
       });
 
-      ffmpeg.on("error", (err) => {
-        reject(err);
+      ffmpeg.on("error", (error) => {
+        console.error(`[YTMP4] FFmpeg spawn error: ${error.message}`);
+        reject(error);
       });
-    });
 
-    return fs.readFileSync(outputPath);
-  } finally {
-    if (tempDir) {
-      try {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      } catch (cleanupError) {
-        console.warn(`[YTMP4] No se pudo limpiar el temporal de thumbnail: ${cleanupError.message}`);
-      }
+    } catch (error) {
+      console.error(`[YTMP4] Error al procesar video: ${error.message}`);
+      reject(error);
     }
-  }
-}
-
-function processVideoWithFFmpeg(inputPath, outputPath, title, durationSeconds) {
-  return new Promise((resolve, reject) => {
-    const ffmpeg = spawn("ffmpeg", [
-      "-i", inputPath,
-      "-c:v", "copy",
-      "-c:a", "copy",
-      "-movflags", "faststart",
-      "-metadata", `title=${title}`,
-      "-metadata", `duration=${durationSeconds * 1000}`,
-      outputPath
-    ], { stdio: "pipe" });
-
-    let errorOutput = "";
-    ffmpeg.stderr.on("data", (data) => {
-      errorOutput += data.toString();
-    });
-
-    ffmpeg.on("close", (code) => {
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error(`FFmpeg falló con código ${code}`));
-      }
-    });
-
-    ffmpeg.on("error", (err) => {
-      reject(err);
-    });
   });
 }
 
+// ✅ NUEVA FUNCIÓN: Convertir timestamp a segundos
 function timestampToSeconds(timestamp) {
-  if (!timestamp) return 0;
-  const parts = String(timestamp).split(":").map(Number);
+  if (!timestamp || typeof timestamp !== "string") return 0;
+
+  const parts = timestamp.split(":").map(Number);
   if (parts.length === 3) {
-    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    return parts[0] * 3600 + parts[1] * 60 + parts[2]; // hh:mm:ss
   } else if (parts.length === 2) {
-    return parts[0] * 60 + parts[1];
+    return parts[0] * 60 + parts[1]; // mm:ss
   }
-  return parts[0] || 0;
+  return 0;
 }
 
-async function sendMessageWithReconnect(conn, jid, content, options, maxRetries = 3) {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+function isConnectionUnavailableError(error) {
+  if (error?.code === "CONNECTION_UNAVAILABLE") return true;
+  const message = String(error?.message || error || "").toLowerCase();
+  return (
+    message.includes("connection closed") ||
+    message.includes("connection terminated") ||
+    message.includes("connection lost") ||
+    message.includes("precondition required") ||
+    message.includes("socket closed")
+  );
+}
+
+function getReadyConnection(fallbackConn) {
+  const hasConnectionGetter = typeof globalThis.getActiveConnection === "function";
+  const activeConn = hasConnectionGetter ? globalThis.getActiveConnection() : fallbackConn;
+
+  if (!activeConn) {
+    const error = new Error("La conexión de WhatsApp se está restableciendo. Espera unos segundos e inténtalo de nuevo.");
+    error.code = "CONNECTION_UNAVAILABLE";
+    throw error;
+  }
+
+  return activeConn;
+}
+
+async function sendMessageWithReconnect(fallbackConn, targetJid, content, options = {}) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      return await conn.sendMessage(jid, content, options);
+      return await getReadyConnection(fallbackConn).sendMessage(targetJid, content, options);
     } catch (error) {
-      if (attempt < maxRetries) {
-        console.warn(`[YTMP4] Intento ${attempt} falló, reintentando en 2 segundos...`);
-        await delay(2000);
-      } else {
-        throw error;
-      }
+      lastError = error;
+      if (!isConnectionUnavailableError(error) || attempt === 2) break;
+
+      const waitMs = 1000 * (attempt + 1);
+      console.warn(`Conexión no disponible al enviar MP4; reintentando en ${waitMs / 1000}s (${attempt + 1}/3).`);
+      await delay(waitMs);
     }
   }
+
+  throw lastError;
 }
 
-const handler = async (m, { conn, usedPrefix, command, text }) => {
-  const query = text?.trim();
-  if (!query) {
+const handler = async (m, { body, conn, usedPrefix, command, silentStatus = false }) => {
+  if (!body || !body.trim()) {
     return m.reply(
-      `✦━【 ❌ *FALTA INFORMACIÓN* 】━✦\n\n` +
-      `Uso: \`${usedPrefix}${command} [enlace de YouTube o búsqueda]\`\n\n` +
-      `Ejemplo: \`${usedPrefix}${command} https://youtu.be/dQw4w9WgXcQ\`\n\n` +
+      `✦━【 🎬 *YOUTUBE MP4* 】━✦\n\n` +
+      `📝 Descarga videos de YouTube en formato MP4.\n` +
+      `💡 Sintaxis: \`${usedPrefix}${command} <url | búsqueda>\`\n` +
+      `📌 Calidad automática: 480p → 360p\n` +
+      `📌 Ejemplo: \`${usedPrefix}${command} https://www.youtube.com/watch?v=dQw4w9WgXcQ\`\n\n` +
       `✨ *Kurumi Tokisaki*`
     );
   }
 
-  const targetJid = m.isGroup ? m.chat : m.sender;
-  const silentStatus = m.fromMe;
-
+  const targetJid = m.chat || m.chatId || m.key?.remoteJid;
+  const query = body.trim();
   let videoUrl = query;
-  let title = "Video";
-  let author = "Desconocido";
-  let duration = "00:00";
+  let title = "Video de YouTube";
+  let author = "YouTube";
+  let duration = "Desconocida";
   let durationSeconds = 0;
-  let views = "0";
-  let date = "Desconocida";
+  let views = "No disponible";
+  let date = "No disponible";
   let description = "Sin descripción";
   let coverUrl = null;
   let coverBuffer = null;
@@ -489,7 +603,9 @@ const handler = async (m, { conn, usedPrefix, command, text }) => {
     `📝 *Descripción:* ${description}\n\n` +
     `✨ *Kurumi Tokisaki*`;
 
-  // Intentar descargar la portada externa
+  // La tarjeta previa nunca se envía como texto plano. La portada externa se
+  // intenta antes de descargar el vídeo, pero si falla se extraerá un fotograma
+  // del MP4 y se enviará la tarjeta después del procesamiento.
   if (coverUrl) {
     try {
       coverBuffer = await downloadThumbnailBuffer(coverUrl);
@@ -587,22 +703,26 @@ const handler = async (m, { conn, usedPrefix, command, text }) => {
     }
   }
 
-  // ✨ SOLUCIÓN: Garantizar que SIEMPRE hay thumbnail antes de enviar el video
   if (!coverBuffer) {
     try {
-      console.info("[YTMP4] Extrayendo thumbnail del video procesado...");
       coverBuffer = await extractVideoThumbnailBuffer(processedVideoBuffer);
-      console.info("[YTMP4] Thumbnail extraído exitosamente.");
+      await sendMessageWithReconnect(
+        conn,
+        targetJid,
+        { image: coverBuffer, caption: cardCaption },
+        { quoted: m }
+      );
+      console.info("[YTMP4] Portada extraída del MP4 y enviada junto con la información.");
     } catch (thumbnailError) {
-      console.warn(`[YTMP4] No se pudo extraer thumbnail del video: ${thumbnailError.message}`);
-      coverBuffer = null; // Null explícito si falla
+      console.warn(`[YTMP4] No se pudo extraer una portada del MP4: ${thumbnailError.message}`);
     }
   }
 
-  // El vídeo se envía CON jpegThumbnail garantizado
+  // La tarjeta con metadatos ya se envió como imagen; no se reutiliza
+  // la portada completa como jpegThumbnail interno del video.
+  // Así Baileys puede generar su propia miniatura desde el MP4.
   const videoMessage = {
     video: processedVideoBuffer,
-    ...(coverBuffer ? { jpegThumbnail: coverBuffer } : {}),
     mimetype: "video/mp4",
     fileName: `${String(title).replace(/[/\\?%*:|"<>]/g, "").trim() || "video"}.mp4`,
     caption: `🎬 *${title}*`,
@@ -617,7 +737,7 @@ const handler = async (m, { conn, usedPrefix, command, text }) => {
       videoMessage,
       { quoted: m }
     );
-    console.info(`[YTMP4] Video nativo enviado desde memoria usando Loader.to en ${loaderResult.quality}p${coverBuffer ? " con thumbnail" : " sin thumbnail"}.`);
+    console.info(`[YTMP4] Video nativo enviado desde memoria usando Loader.to en ${loaderResult.quality}p.`);
   } catch (error) {
     console.error(`[YTMP4] Error al enviar el video nativo: ${error.message}`);
     return m.reply(
