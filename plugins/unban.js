@@ -1,45 +1,30 @@
 // ============================================================
 //   Kurumi Tokisaki - Unban Command
+//   Reactiva al bot en el grupo actual
 // ============================================================
 
-import { getUser, updateUser } from "../lib/database.js";
+import { getGroup, updateGroup } from "../lib/database.js";
 
-const handler = async (m, { args, isOwner, usedPrefix }) => {
-  if (!isOwner) return m.reply(`✦━【 ❌ *ERROR* 】━✦\n\nSolo el owner puede usar este comando.`);
+const handler = async (m, { chatId }) => {
+  const groupConfig = getGroup(chatId);
 
-  const quoted = m.message?.extendedTextMessage?.contextInfo;
-  const mentioned = m.mentionedJid?.[0] || m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
-  const targetNum = args.length > 0 ? args.join("").replace(/[^0-9]/g, "") : "";
-  const targetJid = mentioned || (targetNum ? (targetNum + "@s.whatsapp.net") : quoted?.participant);
-
-  if (!targetJid || targetJid.startsWith("undefined")) {
+  if (!(groupConfig?.mute === 1 || groupConfig?.mute === true)) {
     return m.reply(
-      `✦━【 🔓 *UNBAN* 】━✦\n\n` +
-      `📝 Desbanea a un usuario del bot.\n` +
-      `💡 Sintaxis: \`${usedPrefix}unban @usuario\` o responde a su mensaje\n` +
-      `📌 Ejemplo: \`${usedPrefix}unban @529852270023\``
+      `✦━【 🔊 *BOT ACTIVO* 】━✦\n\n` +
+      `El bot ya está funcionando con normalidad en este grupo.`
     );
   }
 
-  const user = getUser(targetJid);
-  if (!user || !user.banned) {
-    return m.reply(
-      `⚠️ *Atención*\n────────\n@${targetJid.split("@")[0]} no está baneado.`,
-      { mentions: [targetJid] }
-    );
-  }
-
-  updateUser(targetJid, { banned: 0 });
+  updateGroup(chatId, { mute: 0 });
   await m.reply(
-    `✦━【 🔓 *USUARIO DESBANEADO* 】━✦\n\n` +
-    `👤 @${targetJid.split("@")[0]} ha sido desbaneado del bot.`,
-    { mentions: [targetJid] }
+    `✦━【 🔊 *BOT REACTIVADO* 】━✦\n\n` +
+    `El bot vuelve a responder con normalidad a usuarios y administradores.`
   );
 };
 
 handler.command = /^(unban|desbanear)$/i;
-handler.description = "Desbanear a un usuario";
-handler.category = "admin";
-handler.owner = true;
+handler.description = "Reactivar al bot en el grupo actual";
+handler.category = "grupo";
+handler.group = true;
 
 export default handler;

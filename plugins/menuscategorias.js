@@ -242,7 +242,9 @@ const handlerGrupo = async (m, { conn }) => {
     `» ${p}ajustes\n` +
     `» ${p}restablecerajustes confirmar *(admin)*\n` +
     `» ${p}iagrupo <personalidad>\n` +
-    `» ${p}nsfw\n\n` +
+    `» ${p}nsfw\n` +
+    `» ${p}ban *(admin)*\n` +
+    `» ${p}unban\n\n` +
     footer();
 
   await sendMenu(m, conn, text);
@@ -329,8 +331,6 @@ const handlerOwner = async (m, { conn, isOwner }) => {
     `» ${p}reload\n` +
     `» ${p}broadcast\n` +
     `» ${p}darmonedas\n` +
-    `» ${p}ban\n` +
-    `» ${p}unban\n` +
     `» ${p}eval\n\n` +
     footer();
 

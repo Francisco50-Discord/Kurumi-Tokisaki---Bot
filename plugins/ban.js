@@ -1,45 +1,33 @@
 // ============================================================
 //   Kurumi Tokisaki - Ban Command
+//   Silencia al bot en el grupo actual
 // ============================================================
 
-import { getUser, updateUser } from "../lib/database.js";
+import { getGroup, updateGroup } from "../lib/database.js";
 
-const handler = async (m, { args, isOwner, usedPrefix }) => {
-  if (!isOwner) return m.reply(`✦━【 ❌ *ERROR* 】━✦\n\nSolo el owner puede usar este comando.`);
+const handler = async (m, { chatId }) => {
+  const groupConfig = getGroup(chatId);
 
-  const quoted = m.message?.extendedTextMessage?.contextInfo;
-  const mentioned = m.mentionedJid?.[0] || m.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0];
-  const targetNum = args.length > 0 ? args.join("").replace(/[^0-9]/g, "") : "";
-  const targetJid = mentioned || (targetNum ? (targetNum + "@s.whatsapp.net") : quoted?.participant);
-
-  if (!targetJid || targetJid.startsWith("undefined")) {
+  if (groupConfig?.mute === 1 || groupConfig?.mute === true) {
     return m.reply(
-      `✦━【 🚫 *BAN* 】━✦\n\n` +
-      `📝 Banea a un usuario del bot.\n` +
-      `💡 Sintaxis: \`${usedPrefix}ban @usuario\` o responde a su mensaje\n` +
-      `📌 Ejemplo: \`${usedPrefix}ban @529852270023\``
+      `✦━【 🔇 *BOT YA SILENCIADO* 】━✦\n\n` +
+      `El bot ya está silenciado en este grupo.\n` +
+      `Cualquier participante puede usar \`/unban\` para reactivarlo.`
     );
   }
 
-  const user = getUser(targetJid);
-  if (user?.banned) {
-    return m.reply(
-      `⚠️ *Atención*\n────────\n@${targetJid.split("@")[0]} ya está baneado.`,
-      { mentions: [targetJid] }
-    );
-  }
-
-  updateUser(targetJid, { banned: 1 });
+  updateGroup(chatId, { mute: 1 });
   await m.reply(
-    `✦━【 🚫 *USUARIO BANEADO* 】━✦\n\n` +
-    `👤 @${targetJid.split("@")[0]} ha sido baneado del bot.`,
-    { mentions: [targetJid] }
+    `✦━【 🔇 *BOT SILENCIADO* 】━✦\n\n` +
+    `El bot permanecerá en silencio en este grupo.\n` +
+    `Solo se procesará \`/unban\` para volver a la normalidad.`
   );
 };
 
 handler.command = /^(ban|banear)$/i;
-handler.description = "Banear a un usuario del bot";
-handler.category = "admin";
-handler.owner = true;
+handler.description = "Silenciar al bot en el grupo actual";
+handler.category = "grupo";
+handler.group = true;
+handler.admin = true;
 
 export default handler;

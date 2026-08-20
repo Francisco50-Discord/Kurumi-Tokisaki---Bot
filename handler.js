@@ -19,6 +19,12 @@ const HEAVY_COMMANDS = new Set([
 ]);
 const activeHeavyChats = new Set();
 const MAX_CONCURRENT_HEAVY_COMMANDS = Math.max(1, Number(process.env.MAX_CONCURRENT_HEAVY_COMMANDS) || 2);
+const GROUP_UNMUTE_COMMANDS = new Set(["unban", "desbanear"]);
+
+function isGroupMuted(groupConfig) {
+  const value = groupConfig?.mute;
+  return value === 1 || value === true || value === "1" || value === "on" || value === "true";
+}
 
 // ══════════════════════════════════════════════════════════
 // Utilidades para Baileys v7 (LID / PN addressing)
@@ -672,6 +678,16 @@ export async function handleMessage(conn, m, store) {
 
     let groupConfig = isGroup ? getGroup(chatId) : null;
     const ownerCheck = isOwner(sender, m, conn);
+    const usedPrefix = isAiInjection ? "!" : config.prefix.find((p) => text.startsWith(p));
+
+    // Un grupo silenciado no procesa mensajes ni comandos normales. Se deja pasar
+    // únicamente /unban para que cualquier participante pueda reactivar al bot.
+    if (isGroup && isGroupMuted(groupConfig)) {
+      const mutedCommand = usedPrefix
+        ? (text.slice(usedPrefix.length).trim().split(/\s+/)[0] || "").toLowerCase()
+        : "";
+      if (!GROUP_UNMUTE_COMMANDS.has(mutedCommand)) return;
+    }
 
     // ──── Antilink Check Early (para todos los mensajes en grupos) ────
     if (isGroup && groupConfig && (groupConfig.antilink === 1 || groupConfig.antilink === true)) {
@@ -685,8 +701,6 @@ export async function handleMessage(conn, m, store) {
       const { checkAntilink } = getModule("groupHandler");
       if (await checkAntilink(conn, m, groupConfig, isAdmin, ownerCheck)) return;
     }
-
-    const usedPrefix = isAiInjection ? "!" : config.prefix.find((p) => text.startsWith(p));
 
     // ──── 1. Ejecutar hooks 'before' de plugins (juegos interactivos, capturadores de respuestas) ────
     for (const plugin of plugins) {
