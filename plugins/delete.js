@@ -73,7 +73,7 @@ const handler = async (m, { conn, chatId, isGroup, isAdmin, isOwner, usedPrefix 
     return m.reply(
       `✦━【 🗑️ *DELETE* 】━✦\n\n` +
       `Responde al mensaje que quieres eliminar y escribe \`${usedPrefix}delete\`.\n` +
-      `También puedes usar: \`${usedPrefix}del\` o \`${usedPrefix}eliminar\`.`
+      `También puedes usar: \`${usedPrefix}del\`, \`${usedPrefix}eliminar\`, \`${usedPrefix}delt\` o \`${usedPrefix}borrar\`.`
     );
   }
 
@@ -95,7 +95,7 @@ const handler = async (m, { conn, chatId, isGroup, isAdmin, isOwner, usedPrefix 
   }
 };
 
-handler.command = /^(delete|del|eliminar)$/i;
+handler.command = /^(delete|del|eliminar|delt|borrar)$/i;
 handler.description = "Eliminar para todos un mensaje citado";
 handler.category = "grupo";
 
