@@ -92,8 +92,6 @@ const handler = async (m, { args, conn, usedPrefix }) => {
     return m.reply(`❌ *URL inválida*\n────────\nPor favor ingresa un dominio o URL válida.`);
   }
 
-  await m.reply(`⏳ *Capturando pantalla de ${inputUrl}...*`);
-
   try {
     let imageBuffer = null;
 
