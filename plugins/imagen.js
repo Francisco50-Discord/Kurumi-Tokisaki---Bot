@@ -14,7 +14,7 @@ const REQUEST_HEADERS = {
 };
 
 const IMAGE_TIMEOUT_MS = 8000;
-const MAX_RESULTS_TO_SEND = 3;
+const MAX_RESULTS_TO_SEND = 1;
 const MAX_SEARCH_CANDIDATES = 36;
 const MIN_IMAGE_BYTES = 2500;
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
@@ -97,6 +97,15 @@ function uniqueCandidates(candidates) {
   }
 
   return unique;
+}
+
+function shuffleCandidates(candidates) {
+  const shuffled = [...candidates];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = crypto.randomInt(index + 1);
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+  }
+  return shuffled;
 }
 
 async function searchDuckDuckGo(query) {
@@ -195,30 +204,6 @@ async function searchSearx(query) {
 
 async function searchLegacySources(query) {
   const sources = [];
-
-  // Pinterest: solo se usa como respaldo porque su HTML puede cambiar.
-  try {
-    const url = `https://www.pinterest.es/search/pins/?q=${encodeURIComponent(query)}`;
-    const response = await axios.get(url, {
-      headers: { ...REQUEST_HEADERS, Accept: "text/html,application/xhtml+xml" },
-      timeout: IMAGE_TIMEOUT_MS,
-    });
-    const matches = [
-      ...String(response.data || "").matchAll(
-        /(https:\/\/i\.pinimg\.com\/(?:736x|originals|564x|474x)\/[a-f0-9\/]+\.(?:jpg|png|jpeg|webp))/gi,
-      ),
-    ];
-
-    for (const match of matches.slice(0, 12)) {
-      const candidate = createCandidate({
-        imageUrl: match[1],
-        pageUrl: url,
-        source: "pinterest.es",
-        provider: "Pinterest",
-      });
-      if (candidate) sources.push(candidate);
-    }
-  } catch {}
 
   // Pixiv: aporta ilustraciones y metadatos cuando su endpoint es accesible.
   try {
@@ -367,41 +352,38 @@ const handler = async (m, { body, conn, usedPrefix }) => {
   const historyKey = getHistoryKey(m, query);
   const recentSet = getRecentSet(historyKey);
   const freshCandidates = candidates.filter((candidate) => !recentSet.has(candidate.key));
-  const candidatesToTry = (freshCandidates.length >= MAX_RESULTS_TO_SEND ? freshCandidates : candidates).slice(
-    0,
-    MAX_SEARCH_CANDIDATES,
-  );
+  if (freshCandidates.length === 0) {
+    return m.reply(`❌ Ya se enviaron todas las imágenes disponibles encontradas para "${query}". Prueba una búsqueda diferente.`);
+  }
 
-  const downloaded = [];
+  const candidatesToTry = shuffleCandidates(freshCandidates).slice(0, MAX_SEARCH_CANDIDATES);
+  let selectedImage = null;
+
   for (const candidate of candidatesToTry) {
     try {
       const image = await downloadImage(candidate);
-      if (!image) continue;
-      if (recentSet.has(image.hash) || downloaded.some((item) => item.hash === image.hash)) continue;
-      downloaded.push({ candidate, ...image });
-      if (downloaded.length >= MAX_RESULTS_TO_SEND) break;
+      if (!image || recentSet.has(image.hash)) continue;
+      selectedImage = { candidate, ...image };
+      break;
     } catch {}
   }
 
-  if (downloaded.length === 0) {
-    return m.reply(`❌ Se encontraron resultados, pero ninguna imagen pudo descargarse correctamente.`);
+  if (!selectedImage) {
+    return m.reply(`❌ Se encontraron resultados, pero ninguna imagen nueva pudo descargarse correctamente.`);
   }
 
-  const total = downloaded.length;
-  for (let index = 0; index < downloaded.length; index += 1) {
-    const item = downloaded[index];
-    await conn.sendMessage(
-      m.chatId,
-      {
-        image: item.buffer,
-        mimetype: item.mime,
-        caption: captionFor(query, item.candidate, index + 1, total),
-      },
-      { quoted: m },
-    );
-    recentSet.add(item.candidate.key);
-    recentSet.add(item.hash);
-  }
+  await conn.sendMessage(
+    m.chatId,
+    {
+      image: selectedImage.buffer,
+      mimetype: selectedImage.mime,
+      caption: captionFor(query, selectedImage.candidate, 1, 1),
+    },
+    { quoted: m },
+  );
+
+  recentSet.add(selectedImage.candidate.key);
+  recentSet.add(selectedImage.hash);
 
   const history = recentImagesBySearch.get(historyKey);
   if (history) history.updatedAt = Date.now();
