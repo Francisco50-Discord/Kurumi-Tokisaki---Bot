@@ -3,7 +3,72 @@
 // ============================================================
 
 import axios from "axios";
+import sharp from "sharp";
 import { isValidUrl } from "../lib/utils.js";
+
+const MIN_IMAGE_BYTES = 10_000;
+const MIN_WIDTH = 600;
+const MIN_HEIGHT = 400;
+const REQUEST_TIMEOUT = 12_000;
+
+function isPlaceholderText(buffer) {
+  const text = buffer.toString("utf8").toLowerCase();
+  return text.includes("generating preview") || text.includes("preview unavailable");
+}
+
+async function validateScreenshot(data) {
+  if (!data) return null;
+
+  const buffer = Buffer.from(data);
+  if (buffer.length < MIN_IMAGE_BYTES || isPlaceholderText(buffer)) return null;
+
+  try {
+    const metadata = await sharp(buffer).metadata();
+    const supportedFormat = new Set(["jpeg", "png", "webp", "gif", "avif"]);
+    if (!supportedFormat.has(metadata.format)) return null;
+    if (!metadata.width || !metadata.height) return null;
+    if (metadata.width < MIN_WIDTH || metadata.height < MIN_HEIGHT) return null;
+    return buffer;
+  } catch {
+    return null;
+  }
+}
+
+async function captureWithMicrolink(inputUrl) {
+  const apiResponse = await axios.get(
+    `https://api.microlink.io/?url=${encodeURIComponent(inputUrl)}&screenshot=true`,
+    { timeout: REQUEST_TIMEOUT }
+  );
+  const screenshotUrl = apiResponse.data?.data?.screenshot?.url;
+  if (!screenshotUrl) return null;
+
+  const imageResponse = await axios.get(screenshotUrl, {
+    responseType: "arraybuffer",
+    timeout: REQUEST_TIMEOUT,
+    headers: { "User-Agent": "Mozilla/5.0" },
+  });
+  return validateScreenshot(imageResponse.data);
+}
+
+async function captureWithThumIo(inputUrl) {
+  const thumUrl = `https://image.thum.io/get/width/1200/crop/800/noanimate/${inputUrl}`;
+  const response = await axios.get(thumUrl, {
+    responseType: "arraybuffer",
+    timeout: REQUEST_TIMEOUT,
+    headers: { "User-Agent": "Mozilla/5.0" },
+  });
+  return validateScreenshot(response.data);
+}
+
+async function captureWithWordPress(inputUrl) {
+  const wpUrl = `https://s.wordpress.com/mshots/v1/${encodeURIComponent(inputUrl)}?w=1280&h=800`;
+  const response = await axios.get(wpUrl, {
+    responseType: "arraybuffer",
+    timeout: REQUEST_TIMEOUT,
+    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+  });
+  return validateScreenshot(response.data);
+}
 
 const handler = async (m, { args, conn, usedPrefix }) => {
   let inputUrl = args[0] ? args[0].trim() : "";
@@ -19,7 +84,6 @@ const handler = async (m, { args, conn, usedPrefix }) => {
     );
   }
 
-  // Prepend https:// si no incluye protocolo
   if (!/^https?:\/\//i.test(inputUrl)) {
     inputUrl = "https://" + inputUrl;
   }
@@ -33,50 +97,24 @@ const handler = async (m, { args, conn, usedPrefix }) => {
   try {
     let imageBuffer = null;
 
-    // 1. Intentar WordPress mshots
-    try {
-      const wpUrl = `https://s.wordpress.com/mshots/v1/${encodeURIComponent(inputUrl)}?w=1280&h=800`;
-      const res = await axios.get(wpUrl, {
-        responseType: "arraybuffer",
-        timeout: 9000,
-        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }
-      });
-      if (res.data && res.data.length > 5000) {
-        imageBuffer = Buffer.from(res.data);
+    // Microlink y Thum.io entregan capturas reales de páginas dinámicas.
+    // WordPress queda como último respaldo y también pasa validación visual.
+    const providers = [captureWithMicrolink, captureWithThumIo, captureWithWordPress];
+    for (const provider of providers) {
+      try {
+        imageBuffer = await provider(inputUrl);
+        if (imageBuffer) break;
+      } catch {
+        // Probar el siguiente proveedor sin exponer errores internos al chat.
       }
-    } catch (e) {}
-
-    // 2. Fallback: Microlink
-    if (!imageBuffer) {
-      try {
-        const microRes = await axios.get(`https://api.microlink.io/?url=${encodeURIComponent(inputUrl)}&screenshot=true`, { timeout: 9000 });
-        const imgUrl = microRes.data?.data?.screenshot?.url;
-        if (imgUrl) {
-          const imgRes = await axios.get(imgUrl, { responseType: "arraybuffer", timeout: 9000 });
-          if (imgRes.data && imgRes.data.length > 5000) {
-            imageBuffer = Buffer.from(imgRes.data);
-          }
-        }
-      } catch (e) {}
-    }
-
-    // 3. Fallback: Thum.io
-    if (!imageBuffer) {
-      try {
-        const thumUrl = `https://image.thum.io/get/width/1200/crop/800/noanimate/${inputUrl}`;
-        const thumRes = await axios.get(thumUrl, {
-          responseType: "arraybuffer",
-          timeout: 9000,
-          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }
-        });
-        if (thumRes.data && thumRes.data.length > 5000) {
-          imageBuffer = Buffer.from(thumRes.data);
-        }
-      } catch (e) {}
     }
 
     if (!imageBuffer) {
-      return m.reply(`✦━【 ❌ *ERROR* 】━✦\n\nNo se pudo obtener la captura de pantalla de ${inputUrl}. Verifica que la web exista y sea accesible.`);
+      return m.reply(
+        `✦━【 ❌ *ERROR* 】━✦\n\n` +
+        `No se pudo obtener una captura real de ${inputUrl}. ` +
+        `Verifica que la web exista y sea accesible.`
+      );
     }
 
     await conn.sendMessage(
@@ -87,7 +125,7 @@ const handler = async (m, { args, conn, usedPrefix }) => {
       },
       { quoted: m }
     );
-  } catch (err) {
+  } catch {
     await m.reply(`✦━【 ❌ *ERROR* 】━✦\n\nOcurrió un error al procesar la captura de pantalla.`);
   }
 };
