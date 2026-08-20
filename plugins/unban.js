@@ -26,5 +26,6 @@ handler.command = /^(unban|desbanear)$/i;
 handler.description = "Reactivar al bot en el grupo actual";
 handler.category = "grupo";
 handler.group = true;
+handler.admin = true;
 
 export default handler;
