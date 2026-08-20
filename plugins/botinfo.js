@@ -3,7 +3,7 @@
 // ============================================================
 
 import { config } from "../config/settings.js";
-import { sendProfilePictureMessage } from "../lib/profilePicture.js";
+import { getBotJid, sendProfilePictureMessage } from "../lib/profilePicture.js";
 import os from "os";
 
 const startTime = Date.now();
@@ -46,11 +46,10 @@ const handler = async (m, { conn }) => {
 ✦ *${config.botName}* v${config.version}
   `.trim();
 
-  const botJid = conn.user?.id || conn.user?.jid || m.chatId;
+  const botJid = getBotJid(conn, config.botNumber);
 
   await sendProfilePictureMessage(conn, m.chatId, botJid, info, {
     quoted: m,
-    fallbackJid: m.chatId,
   });
 };
 

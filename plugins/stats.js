@@ -2,11 +2,13 @@
 //   Kurumi Tokisaki - Stats Command
 // ============================================================
 
-import db, { dbGet } from "../lib/database.js";
+import db from "../lib/database.js";
 import { plugins } from "../lib/pluginLoader.js";
+import { config } from "../config/settings.js";
+import { getBotJid, sendProfilePictureMessage } from "../lib/profilePicture.js";
 import os from "os";
 
-const handler = async (m) => {
+const handler = async (m, { conn }) => {
   const usersList = Object.values(db.users || {});
   const groupsList = Object.keys(db.groups || {});
   const waifuCount = Object.values(db.waifus || {}).reduce(
@@ -28,8 +30,7 @@ const handler = async (m) => {
   const seconds = Math.floor(uptimeSeconds % 60);
 
   const uptimeStr = `${days > 0 ? `${days}d ` : ""}${hours}h ${minutes}m ${seconds}s`;
-
-  await m.reply(
+  const stats =
     `✦━【 📊 *ESTADÍSTICAS* 】━✦\n\n` +
     `◈ *Usuarios totales:* 👥 ${totalUsers}\n` +
     `◈ *Usuarios registrados:* 📜 ${registeredUsers}\n` +
@@ -41,8 +42,13 @@ const handler = async (m) => {
     `✦━【 ⚙️ *SISTEMA & HOSTING* 】━✦\n\n` +
     `◈ *Tiempo en línea:* ⏱️ ${uptimeStr}\n` +
     `◈ *Memoria Heap RAM:* 🧠 ${(memUsage.heapUsed / 1024 / 1024).toFixed(1)} MB\n` +
-    `◈ *Memoria Sistema:* 💾 ${(os.freemem() / 1024 / 1024 / 1024).toFixed(2)} GB / ${(os.totalmem() / 1024 / 1024 / 1024).toFixed(2)} GB`
-  );
+    `◈ *Memoria Sistema:* 💾 ${(os.freemem() / 1024 / 1024 / 1024).toFixed(2)} GB / ${(os.totalmem() / 1024 / 1024 / 1024).toFixed(2)} GB`;
+
+  const botJid = getBotJid(conn, config.botNumber);
+
+  await sendProfilePictureMessage(conn, m.chatId, botJid, stats, {
+    quoted: m,
+  });
 };
 
 handler.command = /^(stats|estadisticas|estadísticas|botstats)$/i;
