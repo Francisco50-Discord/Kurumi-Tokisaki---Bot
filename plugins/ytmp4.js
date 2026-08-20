@@ -725,7 +725,7 @@ const handler = async (m, { body, conn, usedPrefix, command, silentStatus = fals
     ...(coverBuffer ? { jpegThumbnail: coverBuffer } : {}),
     mimetype: "video/mp4",
     fileName: `${String(title).replace(/[/\\?%*:|"<>]/g, "").trim() || "video"}.mp4`,
-    caption: `🎬 *${title}*\n📺 Calidad: ${loaderResult.quality}p`,
+    caption: `🎬 *${title}*`,
     duration: realDurationSeconds,
     gifPlayback: false
   };
