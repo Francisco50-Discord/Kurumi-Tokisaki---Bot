@@ -203,8 +203,6 @@ const handlerBusqueda = async (m, { conn }) => {
     `» ${p}letra\n` +
     `» ${p}pelicula\n` +
     `» ${p}github\n` +
-    `» ${p}definicion\n` +
-    `» ${p}telefono\n` +
     `» ${p}sticker\n` +
     `» ${p}robarsticker\n` +
     `» ${p}toimg\n` +
