@@ -256,6 +256,82 @@ async function downloadLoaderCandidate(candidate) {
   }
 }
 
+async function downloadThumbnailBuffer(url) {
+  if (!url || typeof url !== "string" || !url.startsWith("http")) {
+    throw new Error("URL de portada no válida.");
+  }
+
+  const response = await axios.get(url, {
+    responseType: "arraybuffer",
+    timeout: 8000,
+    maxContentLength: 5 * 1024 * 1024,
+    maxBodyLength: 5 * 1024 * 1024,
+    headers: {
+      Accept: "image/jpeg,image/*;q=0.9,*/*;q=0.8",
+      "User-Agent": "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/122.0 Safari/537.36"
+    }
+  });
+
+  const buffer = Buffer.from(response.data || []);
+  if (buffer.length < 1000) throw new Error("Portada vacía o demasiado pequeña.");
+  return buffer;
+}
+
+function extractVideoThumbnailBuffer(videoBuffer) {
+  if (!Buffer.isBuffer(videoBuffer) || videoBuffer.length < 50000) {
+    return Promise.reject(new Error("Video insuficiente para extraer una portada."));
+  }
+
+  return new Promise((resolve, reject) => {
+    const ffmpeg = spawn("ffmpeg", [
+      "-hide_banner",
+      "-loglevel", "error",
+      "-i", "pipe:0",
+      "-frames:v", "1",
+      "-vf", "scale=640:-2",
+      "-f", "image2pipe",
+      "-vcodec", "mjpeg",
+      "-q:v", "3",
+      "pipe:1"
+    ], { stdio: ["pipe", "pipe", "pipe"] });
+    const chunks = [];
+    let stderr = "";
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      ffmpeg.kill("SIGKILL");
+      finish(new Error("Tiempo agotado al extraer la portada del MP4."));
+    }, 10000);
+
+    const finish = (error, buffer) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      if (error) reject(error);
+      else resolve(buffer);
+    };
+
+    ffmpeg.stdout.on("data", (chunk) => chunks.push(chunk));
+    ffmpeg.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+    ffmpeg.on("error", finish);
+    ffmpeg.on("close", (code) => {
+      if (code !== 0) {
+        finish(new Error(`FFmpeg no pudo extraer la portada (${code}): ${stderr.trim() || "sin detalle"}`));
+        return;
+      }
+      const buffer = Buffer.concat(chunks);
+      if (buffer.length < 1000) {
+        finish(new Error("FFmpeg generó una portada vacía."));
+        return;
+      }
+      finish(null, buffer);
+    });
+    ffmpeg.stdin.on("error", (error) => {
+      if (error.code !== "EPIPE") finish(error);
+    });
+    ffmpeg.stdin.end(videoBuffer);
+  });
+}
+
 async function downloadMediaBuffer(url) {
   if (!url || typeof url !== "string" || !url.startsWith("http")) {
     throw new Error("URL de descarga no válida.");
@@ -458,6 +534,7 @@ const handler = async (m, { body, conn, usedPrefix, command, silentStatus = fals
   let date = "No disponible";
   let description = "Sin descripción";
   let coverUrl = null;
+  let coverBuffer = null;
 
   if (query.includes("list=") || query.includes("/playlist")) {
     return m.reply(
@@ -499,6 +576,11 @@ const handler = async (m, { body, conn, usedPrefix, command, silentStatus = fals
     console.warn(`[YTMP4] No se pudieron obtener todos los metadatos: ${error.message}`);
   }
 
+  if (!coverUrl) {
+    const fallbackVideoId = videoUrl.match(/(?:v=|youtu\.be\/|\/shorts\/|\/embed\/)([a-zA-Z0-9_-]{11})/i)?.[1];
+    if (fallbackVideoId) coverUrl = `https://i.ytimg.com/vi/${fallbackVideoId}/hqdefault.jpg`;
+  }
+
   if (!/youtube\.com|youtu\.be/i.test(videoUrl)) {
     return m.reply(
       `✦━【 ❌ *ERROR DE ENLACE* 】━✦\n\n` +
@@ -521,14 +603,24 @@ const handler = async (m, { body, conn, usedPrefix, command, silentStatus = fals
     `📝 *Descripción:* ${description}\n\n` +
     `✨ *Kurumi Tokisaki*`;
 
-  try {
-    if (coverUrl) {
-      await sendMessageWithReconnect(conn, targetJid, { image: { url: coverUrl }, caption: cardCaption }, { quoted: m });
-    } else {
-      await sendMessageWithReconnect(conn, targetJid, { text: cardCaption }, { quoted: m });
+  // La tarjeta previa nunca se envía como texto plano. La portada externa se
+  // intenta antes de descargar el vídeo, pero si falla se extraerá un fotograma
+  // del MP4 y se enviará la tarjeta después del procesamiento.
+  if (coverUrl) {
+    try {
+      coverBuffer = await downloadThumbnailBuffer(coverUrl);
+      await sendMessageWithReconnect(
+        conn,
+        targetJid,
+        { image: coverBuffer, caption: cardCaption },
+        { quoted: m }
+      );
+    } catch (cardError) {
+      coverBuffer = null;
+      console.warn(`[YTMP4] La portada externa falló; se extraerá una imagen del MP4: ${cardError.message}`);
     }
-  } catch (cardError) {
-    console.warn(`[YTMP4] No se pudo enviar la tarjeta previa: ${cardError.message}`);
+  } else {
+    console.warn("[YTMP4] No hay portada externa; se extraerá una imagen del MP4.");
   }
 
   let loaderResults = [];
@@ -611,10 +703,26 @@ const handler = async (m, { body, conn, usedPrefix, command, silentStatus = fals
     }
   }
 
-  // No se inyecta una imagen externa en `jpegThumbnail`: Baileys extrae con FFmpeg
-  // un fotograma del MP4 final y lo serializa dentro del mensaje de vídeo nativo.
+  if (!coverBuffer) {
+    try {
+      coverBuffer = await extractVideoThumbnailBuffer(processedVideoBuffer);
+      await sendMessageWithReconnect(
+        conn,
+        targetJid,
+        { image: coverBuffer, caption: cardCaption },
+        { quoted: m }
+      );
+      console.info("[YTMP4] Portada extraída del MP4 y enviada junto con la información.");
+    } catch (thumbnailError) {
+      console.warn(`[YTMP4] No se pudo extraer una portada del MP4: ${thumbnailError.message}`);
+    }
+  }
+
+  // El vídeo conserva la portada validada como thumbnail cuando WhatsApp la acepta.
+  // Nunca se envía la tarjeta como texto plano independiente.
   const videoMessage = {
     video: processedVideoBuffer,
+    ...(coverBuffer ? { jpegThumbnail: coverBuffer } : {}),
     mimetype: "video/mp4",
     fileName: `${String(title).replace(/[/\\?%*:|"<>]/g, "").trim() || "video"}.mp4`,
     caption: `🎬 *${title}*\n📺 Calidad: ${loaderResult.quality}p`,

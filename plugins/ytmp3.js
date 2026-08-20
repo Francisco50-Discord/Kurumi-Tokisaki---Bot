@@ -8,6 +8,8 @@
 import axios from "axios";
 import yts from "yt-search";
 import btch from "btch-downloader";
+import ytdl from "@distube/ytdl-core";
+import { spawn } from "child_process";
 
 function isAbortError(error, signal) {
   if (signal?.aborted) return true;
@@ -90,6 +92,125 @@ async function downloadMediaBuffer(url, signal) {
 }
 
 const LOADER_TO_MP3_MAX_POLLS = 30;
+const DIRECT_YOUTUBE_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
+const DIRECT_YOUTUBE_TIMEOUT_MS = 35_000;
+const YTMP3_RACE_TIMEOUT_MS = 45_000;
+
+function collectYtdlStream(stream, signal) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let totalBytes = 0;
+    let settled = false;
+    let timeoutId;
+
+    const cleanup = () => {
+      clearTimeout(timeoutId);
+      signal?.removeEventListener("abort", onAbort);
+    };
+
+    const finish = (error, buffer) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve(buffer);
+    };
+
+    const onAbort = () => {
+      const error = new Error("Extracción directa cancelada porque otra ruta obtuvo el audio.");
+      error.code = "PROVIDER_ABORTED";
+      stream.destroy(error);
+    };
+
+    timeoutId = setTimeout(() => {
+      const error = new Error("Timeout de extracción directa de YouTube.");
+      error.code = "DIRECT_YOUTUBE_TIMEOUT";
+      stream.destroy(error);
+    }, DIRECT_YOUTUBE_TIMEOUT_MS);
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+    stream.on("data", (chunk) => {
+      totalBytes += chunk.length;
+      if (totalBytes > DIRECT_YOUTUBE_MAX_BUFFER_BYTES) {
+        const error = new Error("El audio directo supera el límite de tamaño permitido.");
+        error.code = "DIRECT_YOUTUBE_TOO_LARGE";
+        stream.destroy(error);
+        return;
+      }
+      chunks.push(Buffer.from(chunk));
+    });
+    stream.on("end", () => finish(null, Buffer.concat(chunks)));
+    stream.on("error", (error) => finish(error));
+  });
+}
+
+function convertBufferToMp3(inputBuffer, signal) {
+  return new Promise((resolve, reject) => {
+    const ffmpeg = spawn("ffmpeg", [
+      "-hide_banner",
+      "-loglevel", "error",
+      "-i", "pipe:0",
+      "-vn",
+      "-c:a", "libmp3lame",
+      "-b:a", "128k",
+      "-f", "mp3",
+      "pipe:1"
+    ], { stdio: ["pipe", "pipe", "pipe"] });
+    const chunks = [];
+    let stderr = "";
+    let settled = false;
+
+    const cleanup = () => signal?.removeEventListener("abort", onAbort);
+    const finish = (error, buffer) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve(buffer);
+    };
+    const onAbort = () => {
+      const error = new Error("Conversión directa cancelada porque otra ruta obtuvo el audio.");
+      error.code = "PROVIDER_ABORTED";
+      ffmpeg.kill("SIGTERM");
+      finish(error);
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+    ffmpeg.stdout.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    ffmpeg.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+    ffmpeg.on("error", (error) => finish(error));
+    ffmpeg.on("close", (code) => {
+      if (code !== 0) {
+        finish(new Error(`FFmpeg no pudo convertir el audio directo (${code}): ${stderr.trim() || "sin detalle"}`));
+        return;
+      }
+      const buffer = Buffer.concat(chunks);
+      if (buffer.length <= 5000) {
+        finish(new Error("La extracción directa produjo un MP3 vacío o demasiado pequeño."));
+        return;
+      }
+      finish(null, buffer);
+    });
+
+    ffmpeg.stdin.on("error", (error) => {
+      if (error.code !== "EPIPE") finish(error);
+    });
+    ffmpeg.stdin.end(inputBuffer);
+  });
+}
+
+async function downloadDirectYoutubeMp3(videoUrl, signal) {
+  throwIfAborted(signal);
+  const stream = ytdl(videoUrl, {
+    quality: "highestaudio",
+    filter: "audioonly",
+    highWaterMark: 1 << 24,
+    requestOptions: { signal }
+  });
+  const sourceBuffer = await collectYtdlStream(stream, signal);
+  throwIfAborted(signal);
+  return convertBufferToMp3(sourceBuffer, signal);
+}
 
 async function resolveDownloadedProvider(provider, signal) {
   let lastError = null;
@@ -99,11 +220,13 @@ async function resolveDownloadedProvider(provider, signal) {
       throwIfAborted(signal);
       const result = await provider(signal);
       throwIfAborted(signal);
-      if (!result?.downloadUrl) {
-        throw new Error("Proveedor sin enlace disponible.");
+      let audioBuffer = result?.audioBuffer;
+      if (!audioBuffer) {
+        if (!result?.downloadUrl) {
+          throw new Error("Proveedor sin enlace disponible.");
+        }
+        audioBuffer = await downloadMediaBuffer(result.downloadUrl, signal);
       }
-
-      const audioBuffer = await downloadMediaBuffer(result.downloadUrl, signal);
       throwIfAborted(signal);
       if (!audioBuffer || audioBuffer.length <= 5000) {
         throw new Error("El proveedor devolvió un audio vacío o demasiado pequeño.");
@@ -124,15 +247,25 @@ async function resolveDownloadedProvider(provider, signal) {
 
 async function getFastestDownloadedResult(providerList) {
   const controller = new AbortController();
-  try {
-    const result = await Promise.any(
-      providerList.map((provider) => resolveDownloadedProvider(provider, controller.signal))
+  let timeoutId;
+  const providerRace = Promise.any(
+    providerList.map((provider) => resolveDownloadedProvider(provider, controller.signal))
+  );
+  const timeoutRace = new Promise((_, reject) => {
+    timeoutId = setTimeout(
+      () => reject(new Error("Tiempo máximo de proveedores agotado.")),
+      YTMP3_RACE_TIMEOUT_MS
     );
-    controller.abort();
-    return result;
-  } catch {
-    controller.abort();
+  });
+
+  try {
+    return await Promise.race([providerRace, timeoutRace]);
+  } catch (error) {
+    console.warn(`[YTMP3] La carrera terminó sin audio válido: ${error.message}`);
     return null;
+  } finally {
+    clearTimeout(timeoutId);
+    controller.abort();
   }
 }
 
@@ -320,7 +453,19 @@ const handler = async (m, { body, conn, usedPrefix, command, silentStatus = fals
   // Así una URL temporal inválida no puede ganar y provocar una segunda ronda
   // completa de llamadas duplicadas.
   const providerList = [
-    // Provider 1: btch-downloader
+    // Provider 1: extracción directa con @distube/ytdl-core + FFmpeg.
+    // Compite con las APIs externas y permite continuar aunque BTCH o Loader.to fallen.
+    async (signal) => {
+      try {
+        const audioBuffer = await downloadDirectYoutubeMp3(videoUrl, signal);
+        return { audioBuffer, provider: "YouTube directo" };
+      } catch (error) {
+        if (isAbortError(error, signal)) throw error;
+        console.warn(`[YTMP3][Directo] Falló: ${error.message}`);
+        return null;
+      }
+    },
+    // Provider 2: btch-downloader
     async (signal) => {
       try {
         throwIfAborted(signal);
@@ -343,7 +488,7 @@ const handler = async (m, { body, conn, usedPrefix, command, silentStatus = fals
       console.warn("[YTMP3][BTCH] No devolvió un enlace MP3 válido.");
       return null;
     },
-    // Provider 2: Loader.to API
+    // Provider 3: Loader.to API
     async (signal) => {
       try {
         throwIfAborted(signal);
