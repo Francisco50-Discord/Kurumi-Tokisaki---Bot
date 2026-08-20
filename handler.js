@@ -9,16 +9,6 @@ import chalk from "chalk";
 import { getModule } from "./lib/hotReload.js";
 import { getGroupMetadata, resolveGroupParticipantJid } from "./lib/utils.js";
 
-// Operaciones que descargan, convierten medios o generan imágenes. Se limitan
-// por chat y globalmente para proteger CPU, memoria y la conexión de WhatsApp.
-const HEAVY_COMMANDS = new Set([
-  "ytsearch", "ytmp3", "ytmp4", "tiktok", "instagram", "facebook", "twitter",
-  "soundcloud", "spotify", "mediafire", "shazam", "sticker", "textsticker",
-  "toimg", "imagen", "screenshot", "pinterest", "manga", "pelicula", "anime",
-  "topanime", "waifu", "miwaifu", "coleccion", "gacha", "ia"
-]);
-const activeHeavyChats = new Set();
-const MAX_CONCURRENT_HEAVY_COMMANDS = Math.max(1, Number(process.env.MAX_CONCURRENT_HEAVY_COMMANDS) || 2);
 const GROUP_UNMUTE_COMMANDS = new Set(["unban", "desbanear"]);
 
 function isGroupMuted(groupConfig) {
@@ -838,17 +828,7 @@ export async function handleMessage(conn, m, store) {
 
       updateUser(sender, { total_commands: (user.total_commands || 0) + 1 });
 
-      const isHeavyCommand = HEAVY_COMMANDS.has(String(command || "").toLowerCase());
       const isInternalAiCommand = Boolean(isAiInjection || m.isAi || m.fromAi);
-      if (isHeavyCommand && !isInternalAiCommand) {
-        if (activeHeavyChats.has(chatId)) {
-          return m.reply(msg.warning(`Ya hay una operación pesada en curso en este chat. Espera a que finalice antes de usar \`${usedPrefix}${command}\` nuevamente.`));
-        }
-        if (activeHeavyChats.size >= MAX_CONCURRENT_HEAVY_COMMANDS) {
-          return m.reply(msg.warning("El bot está procesando varias descargas o imágenes. Intenta de nuevo en unos segundos."));
-        }
-        activeHeavyChats.add(chatId);
-      }
 
       try {
         // La presencia mejora la experiencia visual, pero no debe retrasar el comando.
@@ -905,8 +885,6 @@ export async function handleMessage(conn, m, store) {
             });
           } catch (e) {}
         }
-      } finally {
-        if (isHeavyCommand) activeHeavyChats.delete(chatId);
       }
       return;
     }
@@ -949,12 +927,6 @@ async function handleNonCommand(conn, m, sender, text, chatId, isGroup, groupCon
     if (!isAiEnabled) return;
   }
 
-  // Una conversación de IA también es una operación externa pesada. Si ya se
-  // procesa un medio o una IA en el mismo chat, se omite la respuesta automática
-  // para no crear una cola de solicitudes ni consumir memoria innecesariamente.
-  if (activeHeavyChats.has(chatId) || activeHeavyChats.size >= MAX_CONCURRENT_HEAVY_COMMANDS) return;
-  activeHeavyChats.add(chatId);
-
   try {
     // IA: obtener handleAI del registry (hot-reloadable)
     const iaModule = getModule("ia");
@@ -962,7 +934,5 @@ async function handleNonCommand(conn, m, sender, text, chatId, isGroup, groupCon
   } catch (e) {
     console.error(chalk.red("❌ Error IA:"), e?.message || e);
     await reportError(e, m, { sender, chatId, isGroup, command: "IA" });
-  } finally {
-    activeHeavyChats.delete(chatId);
   }
 }
