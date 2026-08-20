@@ -1,5 +1,12 @@
 import "dotenv/config";
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { webcrypto } from 'node:crypto';
+
+const projectRoot = path.dirname(fileURLToPath(import.meta.url));
+const localFontConfig = path.join(projectRoot, 'assets', 'fonts', 'fonts.conf');
+process.env.FONTCONFIG_FILE ||= localFontConfig;
+process.env.FONTCONFIG_PATH ||= path.dirname(localFontConfig);
 
 if (!globalThis.crypto) {
     globalThis.crypto = webcrypto;

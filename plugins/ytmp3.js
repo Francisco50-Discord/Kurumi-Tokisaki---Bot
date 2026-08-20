@@ -95,6 +95,13 @@ const LOADER_TO_MP3_MAX_POLLS = 30;
 const DIRECT_YOUTUBE_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
 const DIRECT_YOUTUBE_TIMEOUT_MS = 35_000;
 const YTMP3_RACE_TIMEOUT_MS = 45_000;
+const YTMP3_DEBUG_PROVIDER_FAILURES = process.env.YTMP3_DEBUG_PROVIDER_FAILURES === "1";
+
+function logProviderFailure(providerName, error, retrying = false) {
+  if (!YTMP3_DEBUG_PROVIDER_FAILURES) return;
+  const prefix = retrying ? "Reintentando" : "Falló";
+  console.warn(`[YTMP3][${providerName}] ${prefix}: ${error?.message || error}`);
+}
 
 function collectYtdlStream(stream, signal) {
   return new Promise((resolve, reject) => {
@@ -237,7 +244,7 @@ async function resolveDownloadedProvider(provider, signal) {
       if (isAbortError(error, signal)) throw error;
       lastError = error;
       if (attempt === 0) {
-        console.warn(`[YTMP3] El enlace de un proveedor falló; se solicitará una URL nueva: ${error.message}`);
+        logProviderFailure("Proveedor", error, true);
       }
     }
   }
@@ -461,7 +468,7 @@ const handler = async (m, { body, conn, usedPrefix, command, silentStatus = fals
         return { audioBuffer, provider: "YouTube directo" };
       } catch (error) {
         if (isAbortError(error, signal)) throw error;
-        console.warn(`[YTMP3][Directo] Falló: ${error.message}`);
+        logProviderFailure("Directo", error);
         return null;
       }
     },
@@ -483,9 +490,11 @@ const handler = async (m, { body, conn, usedPrefix, command, silentStatus = fals
         }
       } catch (error) {
         if (isAbortError(error, signal)) throw error;
-        console.warn(`[YTMP3][BTCH] Falló: ${error.message}`);
+        logProviderFailure("BTCH", error);
       }
-      console.warn("[YTMP3][BTCH] No devolvió un enlace MP3 válido.");
+      if (YTMP3_DEBUG_PROVIDER_FAILURES) {
+        console.warn("[YTMP3][BTCH] No devolvió un enlace MP3 válido.");
+      }
       return null;
     },
     // Provider 3: Loader.to API
@@ -535,9 +544,11 @@ const handler = async (m, { body, conn, usedPrefix, command, silentStatus = fals
         }
       } catch (error) {
         if (isAbortError(error, signal)) throw error;
-        console.warn(`[YTMP3][Loader.to] Falló: ${error.message}`);
+        logProviderFailure("Loader.to", error);
       }
-      console.warn("[YTMP3][Loader.to] No terminó con un enlace MP3 válido.");
+      if (YTMP3_DEBUG_PROVIDER_FAILURES) {
+        console.warn("[YTMP3][Loader.to] No terminó con un enlace MP3 válido.");
+      }
       return null;
     }
   ];
