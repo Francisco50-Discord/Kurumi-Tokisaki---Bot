@@ -12,6 +12,12 @@ const REQUEST_HEADERS = {
   Accept: "text/html,application/xhtml+xml,application/json,*/*;q=0.8"
 };
 
+// WhatsApp admite documentos grandes, pero el bot impone un límite explícito
+// para evitar consumir memoria o almacenamiento sin control.
+const MAX_FILE_SIZE_BYTES = 600 * 1024 * 1024;
+const MAX_FILE_SIZE_MB = 600;
+const DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1000;
+
 function decodeHtml(value = "") {
   return String(value)
     .replace(/&amp;/gi, "&")
@@ -106,6 +112,34 @@ function extractFileName(html, fallback = "archivo_mediafire") {
 function extractFileSize(html, fallback = "Desconocido") {
   const match = html.match(/(?:file\s*size|size)[^\d]{0,40}([\d.,]+\s*(?:B|KB|MB|GB|TB))/i);
   return match?.[1]?.trim() || fallback;
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return "Desconocido";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unitIndex = -1;
+  do {
+    value /= 1024;
+    unitIndex += 1;
+  } while (value >= 1024 && unitIndex < units.length - 1);
+  return `${value.toFixed(value >= 100 ? 0 : 2)} ${units[unitIndex]}`;
+}
+
+function createFileTooLargeError(bytes) {
+  const error = new Error(
+    `El archivo supera el límite de ${MAX_FILE_SIZE_MB} MB${
+      Number.isFinite(bytes) ? ` (${formatBytes(bytes)})` : ""
+    }.`
+  );
+  error.code = "MEDIAFIRE_FILE_TOO_LARGE";
+  return error;
+}
+
+function getContentLength(headers) {
+  const value = Number(headers?.["content-length"] || headers?.["Content-Length"]);
+  return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 async function resolveFromPage(pageUrl) {
@@ -219,17 +253,49 @@ async function downloadFile(downloadUrl, fileName) {
   let currentUrl = downloadUrl;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    // La consulta HEAD evita iniciar una descarga completa si el servidor ya
+    // anuncia un tamaño por encima del límite permitido.
+    try {
+      const headResponse = await axios.head(currentUrl, {
+        headers: { ...REQUEST_HEADERS, Accept: "*/*" },
+        timeout: 20000,
+        maxRedirects: 8,
+        validateStatus: () => true
+      });
+      if (headResponse.status < 400) {
+        const announcedSize = getContentLength(headResponse.headers);
+        if (announcedSize !== null && announcedSize > MAX_FILE_SIZE_BYTES) {
+          throw createFileTooLargeError(announcedSize);
+        }
+      }
+    } catch (error) {
+      if (error?.code === "MEDIAFIRE_FILE_TOO_LARGE") throw error;
+      // Algunos CDN no soportan HEAD. En ese caso la descarga GET continúa
+      // protegida por maxContentLength y por la comprobación de la respuesta.
+    }
+
     const response = await axios.get(currentUrl, {
       responseType: "arraybuffer",
       headers: { ...REQUEST_HEADERS, Accept: "*/*" },
-      timeout: 60000,
+      timeout: DOWNLOAD_TIMEOUT_MS,
       maxRedirects: 8,
+      maxContentLength: MAX_FILE_SIZE_BYTES,
+      maxBodyLength: MAX_FILE_SIZE_BYTES,
       validateStatus: () => true
     });
 
     if (response.status >= 400) throw new Error(`MediaFire respondió HTTP ${response.status} al descargar.`);
 
+    const announcedSize = getContentLength(response.headers);
+    if (announcedSize !== null && announcedSize > MAX_FILE_SIZE_BYTES) {
+      throw createFileTooLargeError(announcedSize);
+    }
+
     const buffer = Buffer.from(response.data);
+    if (buffer.length > MAX_FILE_SIZE_BYTES) {
+      throw createFileTooLargeError(buffer.length);
+    }
+
     if (looksLikeHtml(response, buffer)) {
       const html = buffer.toString("utf8");
       const nextUrl = extractDirectUrl(html, currentUrl);
@@ -253,7 +319,7 @@ const handler = async (m, { body, conn, usedPrefix, command }) => {
   if (!body || !body.trim()) {
     return m.reply(
       `✦━【 📂 *MEDIAFIRE DOWNLOADER* 】━✦\n\n` +
-      `📝 Descarga archivos directos de MediaFire.\n` +
+      `📝 Descarga archivos directos de MediaFire de hasta ${MAX_FILE_SIZE_MB} MB.\n` +
       `💡 Sintaxis: \`${usedPrefix}${command} <url>\`\n` +
       `📌 Ejemplo: \`${usedPrefix}${command} https://www.mediafire.com/file/ID/nombre-del-archivo.zip/file\``
     );
@@ -283,7 +349,7 @@ const handler = async (m, { body, conn, usedPrefix, command }) => {
       cleanFilename(providerResult.fileName)
     );
     const fileName = downloaded.fileName || cleanFilename(providerResult.fileName);
-    const fileSize = providerResult.fileSize || "Desconocido";
+    const fileSize = formatBytes(downloaded.buffer.length) || providerResult.fileSize || "Desconocido";
     const caption =
       `✦━【 📂 *MEDIAFIRE DOWNLOADER* 】━✦\n\n` +
       `📝 *Nombre:* ${fileName}\n` +
@@ -302,6 +368,9 @@ const handler = async (m, { body, conn, usedPrefix, command }) => {
     );
   } catch (err) {
     console.error("Error en MediaFire downloader:", err.message);
+    if (err?.code === "MEDIAFIRE_FILE_TOO_LARGE") {
+      return m.reply(`❌ El archivo supera el límite permitido de ${MAX_FILE_SIZE_MB} MB.`);
+    }
     await m.reply(`❌ Error al descargar el archivo de MediaFire: ${err.message}`);
   }
 };
