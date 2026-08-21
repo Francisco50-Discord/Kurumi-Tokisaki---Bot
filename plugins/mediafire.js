@@ -3,7 +3,15 @@
 //   Resolver directo + proveedores externos de respaldo
 // ============================================================
 
+import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { rm, readFile, stat } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
 import axios from "axios";
+
+const execFileAsync = promisify(execFile);
 
 const MEDIAFIRE_HOST_RE = /(^|\.)mediafire\.com$/i;
 const DIRECT_HOST_RE = /^download\d*\.mediafire\.com$/i;
@@ -14,8 +22,8 @@ const REQUEST_HEADERS = {
 
 // WhatsApp admite documentos grandes, pero el bot impone un límite explícito
 // para evitar consumir memoria o almacenamiento sin control.
-const MAX_FILE_SIZE_BYTES = 600 * 1024 * 1024;
-const MAX_FILE_SIZE_MB = 600;
+const MAX_FILE_SIZE_BYTES = 200 * 1024 * 1024;
+const MAX_FILE_SIZE_MB = 200;
 const DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1000;
 
 function decodeHtml(value = "") {
@@ -110,8 +118,35 @@ function extractFileName(html, fallback = "archivo_mediafire") {
 }
 
 function extractFileSize(html, fallback = "Desconocido") {
-  const match = html.match(/(?:file\s*size|size)[^\d]{0,40}([\d.,]+\s*(?:B|KB|MB|GB|TB))/i);
-  return match?.[1]?.trim() || fallback;
+  const patterns = [
+    /Download\s*\(\s*([\d.,]+\s*(?:B|KB|MB|GB|TB))\s*\)/i,
+    /(?:file\s*size|size)[^\d]{0,40}([\d.,]+\s*(?:B|KB|MB|GB|TB))/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) return match[1].trim();
+  }
+  return fallback;
+}
+
+function parseSizeToBytes(value) {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
+
+  const match = String(value || "").match(/([\d.,]+)\s*(B|KB|MB|GB|TB)/i);
+  if (!match) return null;
+
+  const rawNumber = match[1].replace(/\s/g, "");
+  const numericText = rawNumber.includes(".") && rawNumber.includes(",")
+    ? rawNumber.replace(/,/g, "")
+    : rawNumber.includes(",")
+      ? rawNumber.replace(/,/g, ".")
+      : rawNumber;
+  const numericValue = Number(numericText);
+  if (!Number.isFinite(numericValue)) return null;
+
+  const unitIndex = ["B", "KB", "MB", "GB", "TB"].indexOf(match[2].toUpperCase());
+  return unitIndex < 0 ? null : Math.round(numericValue * (1024 ** unitIndex));
 }
 
 function formatBytes(bytes) {
@@ -142,26 +177,57 @@ function getContentLength(headers) {
   return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
-async function resolveFromPage(pageUrl) {
-  const response = await axios.get(pageUrl, {
-    headers: REQUEST_HEADERS,
-    timeout: 15000,
-    maxRedirects: 5,
-    validateStatus: () => true
-  });
+async function fetchMediafirePage(pageUrl) {
+  try {
+    const { stdout } = await execFileAsync(
+      "curl",
+      [
+        "--location",
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--max-time",
+        "30",
+        "-A",
+        REQUEST_HEADERS["User-Agent"],
+        pageUrl
+      ],
+      { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 }
+    );
+    return stdout;
+  } catch (curlError) {
+    try {
+      const response = await axios.get(pageUrl, {
+        headers: REQUEST_HEADERS,
+        timeout: 15000,
+        maxRedirects: 5,
+        validateStatus: () => true
+      });
 
-  if (response.status >= 400) {
-    throw new Error(`MediaFire respondió HTTP ${response.status}.`);
+      if (response.status >= 400) {
+        throw new Error(`MediaFire respondió HTTP ${response.status}.`);
+      }
+
+      return typeof response.data === "string" ? response.data : "";
+    } catch {
+      throw curlError;
+    }
   }
+}
 
-  const html = typeof response.data === "string" ? response.data : "";
+async function resolveFromPage(pageUrl) {
+  const html = await fetchMediafirePage(pageUrl);
   const downloadUrl = extractDirectUrl(html, pageUrl);
   if (!downloadUrl) throw new Error("La página no contiene un enlace directo de descarga.");
+
+  const fileSize = extractFileSize(html);
+  const fileSizeBytes = parseSizeToBytes(fileSize);
 
   return {
     downloadUrl,
     fileName: extractFileName(html),
-    fileSize: extractFileSize(html)
+    fileSize,
+    fileSizeBytes
   };
 }
 
@@ -193,10 +259,12 @@ async function resolveFromAgatz(pageUrl) {
   const data = getProviderData(response.data);
   const downloadUrl = getProviderUrl(data);
   if (!downloadUrl) throw new Error("Agatz no devolvió un enlace directo.");
+  const fileSize = data.filesize || data.size || "Desconocido";
   return {
     downloadUrl,
     fileName: cleanFilename(data.filename || data.name || data.nama),
-    fileSize: data.filesize || data.size || "Desconocido"
+    fileSize,
+    fileSizeBytes: parseSizeToBytes(fileSize)
   };
 }
 
@@ -210,25 +278,27 @@ async function resolveFromSiputzx(pageUrl) {
   const data = getProviderData(response.data);
   const downloadUrl = getProviderUrl(data);
   if (!downloadUrl) throw new Error("Siputzx no devolvió un enlace directo.");
+  const fileSize = data.filesize || data.size || "Desconocido";
   return {
     downloadUrl,
     fileName: cleanFilename(data.filename || data.name),
-    fileSize: data.filesize || data.size || "Desconocido"
+    fileSize,
+    fileSizeBytes: parseSizeToBytes(fileSize)
   };
 }
 
-async function resolveDownload(pageUrl) {
+async function resolveDownloadCandidates(pageUrl) {
   const providers = [
     () => resolveFromPage(pageUrl),
     () => resolveFromAgatz(pageUrl),
     () => resolveFromSiputzx(pageUrl)
   ];
 
-  try {
-    return await Promise.any(providers.map((provider) => provider()));
-  } catch {
-    return null;
-  }
+  const results = await Promise.allSettled(providers.map((provider) => provider()));
+  return results
+    .filter((result) => result.status === "fulfilled")
+    .map((result) => result.value)
+    .filter((result) => result?.downloadUrl);
 }
 
 function looksLikeHtml(response, buffer) {
@@ -249,55 +319,113 @@ function filenameFromHeaders(response, fallback) {
   }
 }
 
+function parseCurlHeaders(rawHeaders) {
+  const blocks = String(rawHeaders || "")
+    .split(/\r?\n\r?\n/)
+    .filter((block) => /^HTTP\/\d(?:\.\d)?\s+\d+/im.test(block));
+  const lastBlock = blocks.at(-1) || "";
+  const headers = {};
+
+  for (const line of lastBlock.split(/\r?\n/).slice(1)) {
+    const separator = line.indexOf(":");
+    if (separator <= 0) continue;
+    headers[line.slice(0, separator).trim().toLowerCase()] = line.slice(separator + 1).trim();
+  }
+  return headers;
+}
+
+async function downloadWithCurl(downloadUrl) {
+  const prefix = path.join(os.tmpdir(), `mediafire-${randomUUID()}`);
+  const dataPath = `${prefix}.data`;
+  const headersPath = `${prefix}.headers`;
+
+  try {
+    try {
+      await execFileAsync(
+        "curl",
+        [
+          "--location",
+          "--ipv4",
+          "--fail",
+          "--silent",
+          "--show-error",
+          "--max-time",
+          String(Math.ceil(DOWNLOAD_TIMEOUT_MS / 1000)),
+          "--max-filesize",
+          String(MAX_FILE_SIZE_BYTES),
+          "-A",
+          REQUEST_HEADERS["User-Agent"],
+          "-D",
+          headersPath,
+          "--output",
+          dataPath,
+          downloadUrl
+        ],
+        { encoding: "utf8", maxBuffer: 2 * 1024 * 1024 }
+      );
+    } catch (error) {
+      if (error?.code === 63 || /maximum file size/i.test(error?.stderr || "")) {
+        throw createFileTooLargeError();
+      }
+      throw error;
+    }
+
+    const fileStat = await stat(dataPath);
+    if (fileStat.size > MAX_FILE_SIZE_BYTES) {
+      throw createFileTooLargeError(fileStat.size);
+    }
+
+    return {
+      status: 200,
+      headers: parseCurlHeaders(await readFile(headersPath, "utf8")),
+      buffer: await readFile(dataPath)
+    };
+  } finally {
+    await rm(dataPath, { force: true }).catch(() => {});
+    await rm(headersPath, { force: true }).catch(() => {});
+  }
+}
+
+async function downloadWithAxios(downloadUrl) {
+  const response = await axios.get(downloadUrl, {
+    responseType: "arraybuffer",
+    headers: { ...REQUEST_HEADERS, Accept: "*/*" },
+    timeout: DOWNLOAD_TIMEOUT_MS,
+    maxRedirects: 8,
+    maxContentLength: MAX_FILE_SIZE_BYTES,
+    maxBodyLength: MAX_FILE_SIZE_BYTES,
+    validateStatus: () => true
+  });
+
+  return {
+    status: response.status,
+    headers: response.headers,
+    buffer: Buffer.from(response.data)
+  };
+}
+
 async function downloadFile(downloadUrl, fileName) {
   let currentUrl = downloadUrl;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    // La consulta HEAD evita iniciar una descarga completa si el servidor ya
-    // anuncia un tamaño por encima del límite permitido.
+    let response;
     try {
-      const headResponse = await axios.head(currentUrl, {
-        headers: { ...REQUEST_HEADERS, Accept: "*/*" },
-        timeout: 20000,
-        maxRedirects: 8,
-        validateStatus: () => true
-      });
-      if (headResponse.status < 400) {
-        const announcedSize = getContentLength(headResponse.headers);
-        if (announcedSize !== null && announcedSize > MAX_FILE_SIZE_BYTES) {
-          throw createFileTooLargeError(announcedSize);
-        }
-      }
-    } catch (error) {
-      if (error?.code === "MEDIAFIRE_FILE_TOO_LARGE") throw error;
-      // Algunos CDN no soportan HEAD. En ese caso la descarga GET continúa
-      // protegida por maxContentLength y por la comprobación de la respuesta.
+      response = await downloadWithCurl(currentUrl);
+    } catch (curlError) {
+      if (curlError?.code === "MEDIAFIRE_FILE_TOO_LARGE") throw curlError;
+      response = await downloadWithAxios(currentUrl);
     }
 
-    const response = await axios.get(currentUrl, {
-      responseType: "arraybuffer",
-      headers: { ...REQUEST_HEADERS, Accept: "*/*" },
-      timeout: DOWNLOAD_TIMEOUT_MS,
-      maxRedirects: 8,
-      maxContentLength: MAX_FILE_SIZE_BYTES,
-      maxBodyLength: MAX_FILE_SIZE_BYTES,
-      validateStatus: () => true
-    });
-
-    if (response.status >= 400) throw new Error(`MediaFire respondió HTTP ${response.status} al descargar.`);
-
-    const announcedSize = getContentLength(response.headers);
-    if (announcedSize !== null && announcedSize > MAX_FILE_SIZE_BYTES) {
-      throw createFileTooLargeError(announcedSize);
+    if (response.status >= 400) {
+      throw new Error(`MediaFire respondió HTTP ${response.status} al descargar.`);
     }
 
-    const buffer = Buffer.from(response.data);
-    if (buffer.length > MAX_FILE_SIZE_BYTES) {
-      throw createFileTooLargeError(buffer.length);
+    if (response.buffer.length > MAX_FILE_SIZE_BYTES) {
+      throw createFileTooLargeError(response.buffer.length);
     }
 
-    if (looksLikeHtml(response, buffer)) {
-      const html = buffer.toString("utf8");
+    if (looksLikeHtml(response, response.buffer)) {
+      const html = response.buffer.toString("utf8");
       const nextUrl = extractDirectUrl(html, currentUrl);
       if (!nextUrl) throw new Error("MediaFire devolvió una página HTML en lugar del archivo.");
       currentUrl = nextUrl;
@@ -306,7 +434,7 @@ async function downloadFile(downloadUrl, fileName) {
 
     const mimeType = String(response.headers?.["content-type"] || "application/octet-stream").split(";")[0];
     return {
-      buffer,
+      buffer: response.buffer,
       mimeType: mimeType || "application/octet-stream",
       fileName: filenameFromHeaders(response, fileName)
     };
@@ -335,19 +463,44 @@ const handler = async (m, { body, conn, usedPrefix, command }) => {
 
   await m.reply(`⏳ *Procesando archivo de MediaFire...*`);
 
-  const providerResult = await resolveDownload(url);
-  if (!providerResult?.downloadUrl) {
+  const providerResults = await resolveDownloadCandidates(url);
+  if (!providerResults.length) {
     return m.reply(
       `❌ No se pudo obtener el archivo de MediaFire.\n` +
       `Verifica que el enlace sea público, esté completo y todavía exista.`
     );
   }
 
+  const announcedTooLarge = providerResults.find(
+    (candidate) => Number.isFinite(candidate.fileSizeBytes) && candidate.fileSizeBytes > MAX_FILE_SIZE_BYTES
+  );
+  if (announcedTooLarge) {
+    return m.reply(`❌ El archivo supera el límite permitido de ${MAX_FILE_SIZE_MB} MB.`);
+  }
+
   try {
-    const downloaded = await downloadFile(
-      providerResult.downloadUrl,
-      cleanFilename(providerResult.fileName)
-    );
+    let downloaded = null;
+    let providerResult = null;
+    let lastError = null;
+
+    for (const candidate of providerResults) {
+      try {
+        downloaded = await downloadFile(
+          candidate.downloadUrl,
+          cleanFilename(candidate.fileName)
+        );
+        providerResult = candidate;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (error?.code === "MEDIAFIRE_FILE_TOO_LARGE") throw error;
+      }
+    }
+
+    if (!downloaded || !providerResult) {
+      throw lastError || new Error("No se pudo completar la descarga directa de MediaFire.");
+    }
+
     const fileName = downloaded.fileName || cleanFilename(providerResult.fileName);
     const fileSize = formatBytes(downloaded.buffer.length) || providerResult.fileSize || "Desconocido";
     const caption =
